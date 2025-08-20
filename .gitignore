@@ -1,0 +1,68 @@
+# Rust/Cargo
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Bevy specific
+# Hot reloading assets (if using bevy_asset_loader)
+imported_assets/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Profiling data
+*.prof
+perf.data*
+
+# Shader compilation cache
+.shader_cache/
+
+# Asset processing cache
+.bevy_asset_v1/
+
+# Local configuration
+.env
+.env.local
+
+# Documentation build
+/doc/
+
+# Backup files
+*.bak
+*.backup
+
+# Test coverage
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Flamegraph output
+flamegraph.svg
+perf.data
