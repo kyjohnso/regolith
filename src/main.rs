@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
+use std::collections::VecDeque;
 
 mod gpu_compute;
 use gpu_compute::{GpuComputePlugin, ComputeUniforms};
@@ -10,7 +11,7 @@ const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 10000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 1000; // Reduce for better visibility of interactions
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
@@ -40,12 +41,36 @@ struct RegolithParticle {
     mass: f32,
 }
 
+// FPS tracking resource
+#[derive(Resource)]
+struct FpsTracker {
+    frame_times: VecDeque<f32>,
+    current_fps: f32,
+    update_timer: f32,
+}
+
+impl Default for FpsTracker {
+    fn default() -> Self {
+        Self {
+            frame_times: VecDeque::with_capacity(60),
+            current_fps: 0.0,
+            update_timer: 0.0,
+        }
+    }
+}
+
+// Component for FPS display text
+#[derive(Component)]
+struct FpsText;
+
 fn main() {
     let mut app = App::new();
     
     app.add_plugins(DefaultPlugins)
         .add_plugins(PanOrbitCameraPlugin)
-        .add_systems(Startup, (setup, spawn_regolith_particles));
+        .init_resource::<FpsTracker>()
+        .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui))
+        .add_systems(Update, (fps_tracker_system, fps_display_system));
     
     if USE_GPU_COMPUTE {
         println!("Using GPU compute for particle physics");
@@ -559,5 +584,66 @@ fn monitor_particle_stability(
         } else if jitter_percentage < 10.0 {
             println!("SUCCESS: Low jittering - only {:.1}% of particles have micro-motion", jitter_percentage);
         }
+    }
+}
+
+// FPS tracking system
+fn fps_tracker_system(
+    mut fps_tracker: ResMut<FpsTracker>,
+    time: Res<Time>,
+) {
+    let delta_time = time.delta_secs();
+    
+    // Add current frame time to the queue
+    fps_tracker.frame_times.push_back(delta_time);
+    
+    // Keep only the last 60 frames (1 second at 60 FPS)
+    if fps_tracker.frame_times.len() > 60 {
+        fps_tracker.frame_times.pop_front();
+    }
+    
+    // Update FPS calculation every 0.1 seconds
+    fps_tracker.update_timer += delta_time;
+    if fps_tracker.update_timer >= 0.1 {
+        fps_tracker.update_timer = 0.0;
+        
+        // Calculate average frame time and convert to FPS
+        if !fps_tracker.frame_times.is_empty() {
+            let avg_frame_time: f32 = fps_tracker.frame_times.iter().sum::<f32>() / fps_tracker.frame_times.len() as f32;
+            fps_tracker.current_fps = if avg_frame_time > 0.0 { 1.0 / avg_frame_time } else { 0.0 };
+        }
+    }
+}
+
+// Setup FPS UI overlay
+fn setup_fps_ui(mut commands: Commands) {
+    // Create UI camera
+    commands.spawn(Camera2d);
+    
+    // Create FPS text overlay
+    commands.spawn((
+        Text::new("FPS: 0"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgb(1.0, 1.0, 0.0)), // Yellow text
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        FpsText,
+    ));
+}
+
+// Update FPS display system
+fn fps_display_system(
+    fps_tracker: Res<FpsTracker>,
+    mut fps_text_query: Query<&mut Text, With<FpsText>>,
+) {
+    if let Ok(mut text) = fps_text_query.single_mut() {
+        text.0 = format!("FPS: {:.1}", fps_tracker.current_fps);
     }
 }
