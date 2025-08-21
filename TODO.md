@@ -53,9 +53,9 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [ ] Test: Run cargo run and validate 1M+ particle performance
 
 ### Phase 7: Game Mechanics
-- [ ] Add particle size variation and basic shape differentiation
-- [ ] Implement player-regolith interaction mechanics
-- [ ] Test: Run cargo run to verify player can interact with particles
+- [x] Add particle size variation and basic shape differentiation
+- [x] Implement player-regolith interaction mechanics
+- [x] Test: Run cargo run to verify player can interact with particles
 - [ ] Create foundation for compute farm remnants system
 - [ ] Add basic regolith manipulation tools for rebuilding
 

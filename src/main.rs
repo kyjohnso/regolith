@@ -11,7 +11,8 @@ const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 1000; // Reduce for better visibility of interactions
-const PARTICLE_RADIUS: f32 = 0.1; // Make particles bigger for easier visibility
+const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
+const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 2.0; // Spawn even closer to player for testing
 
 // GPU compute toggle
@@ -192,34 +193,66 @@ fn spawn_regolith_particles(
     use rand::Rng;
     let mut rng = rand::thread_rng();
 
-    // Create a shared mesh and material for all particles
-    let particle_mesh = meshes.add(Sphere::new(PARTICLE_RADIUS));
-    let particle_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.6, 0.5, 0.4), // Regolith brown-gray
+    // Create materials for different particle types
+    let fine_dust_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.5, 0.4, 0.3), // Darker for fine dust
+        perceptual_roughness: 0.9,
+        metallic: 0.0,
+        ..default()
+    });
+    
+    let medium_particle_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.6, 0.5, 0.4), // Standard regolith brown-gray
         perceptual_roughness: 0.8,
         metallic: 0.0,
         ..default()
     });
+    
+    let large_particle_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.7, 0.6, 0.5), // Lighter for larger particles
+        perceptual_roughness: 0.7,
+        metallic: 0.1, // Slight metallic for rock-like appearance
+        ..default()
+    });
 
-    // Spawn particles in a random distribution above the surface, closer to player
+    // Spawn particles with varied sizes in a random distribution above the surface
     for _ in 0..PARTICLE_COUNT {
         let x = rng.gen_range(-SPAWN_AREA_SIZE..SPAWN_AREA_SIZE);
         let z = rng.gen_range(-SPAWN_AREA_SIZE..SPAWN_AREA_SIZE);
         let y = rng.gen_range(1.0..5.0); // Start particles closer to ground and player
 
+        // Generate random particle radius
+        let radius = rng.gen_range(MIN_PARTICLE_RADIUS..MAX_PARTICLE_RADIUS);
+        
+        // Mass scales with volume (radius^3) for realistic physics
+        let mass = (radius / MIN_PARTICLE_RADIUS).powi(3) * 0.5; // Base mass of 0.5 for smallest particles
+        
+        // Create individual mesh for each particle size
+        let particle_mesh = meshes.add(Sphere::new(radius));
+        
+        // Choose material based on particle size
+        let material = if radius < MIN_PARTICLE_RADIUS + 0.03 {
+            fine_dust_material.clone()
+        } else if radius < MIN_PARTICLE_RADIUS + 0.07 {
+            medium_particle_material.clone()
+        } else {
+            large_particle_material.clone()
+        };
+
         commands.spawn((
-            Mesh3d(particle_mesh.clone()),
-            MeshMaterial3d(particle_material.clone()),
+            Mesh3d(particle_mesh),
+            MeshMaterial3d(material),
             Transform::from_xyz(x, y, z),
             RegolithParticle {
-                radius: PARTICLE_RADIUS,
-                mass: 1.0, // Simple uniform mass for now
+                radius,
+                mass,
             },
             Velocity(Vec3::ZERO),
         ));
     }
 
-    println!("Spawned {} regolith particles", PARTICLE_COUNT);
+    println!("Spawned {} regolith particles with varied sizes ({:.3} to {:.3})",
+             PARTICLE_COUNT, MIN_PARTICLE_RADIUS, MAX_PARTICLE_RADIUS);
 }
 
 fn particle_collisions(
@@ -257,7 +290,13 @@ fn particle_collisions(
                 position_updates[i] -= separation;
                 position_updates[j] += separation;
                 
-                // Simple elastic collision response
+                // Get masses from particle data (we need to access the actual particles)
+                // For now, we'll use a simplified approach based on radius
+                let mass_a = (radius_a / MIN_PARTICLE_RADIUS).powi(3) * 0.5;
+                let mass_b = (radius_b / MIN_PARTICLE_RADIUS).powi(3) * 0.5;
+                let total_mass = mass_a + mass_b;
+                
+                // Mass-based elastic collision response
                 let relative_velocity = vel_b - vel_a;
                 let velocity_along_normal = relative_velocity.dot(normal);
                 
@@ -268,12 +307,12 @@ fn particle_collisions(
                 
                 // Restitution (bounciness) - lower for regolith
                 let restitution = 0.2;
-                let impulse_scalar = -(1.0 + restitution) * velocity_along_normal;
+                let impulse_scalar = -(1.0 + restitution) * velocity_along_normal / total_mass;
                 let impulse = normal * impulse_scalar;
                 
-                // Apply impulse (assuming equal mass for simplicity)
-                velocity_updates[i] -= impulse * 0.5;
-                velocity_updates[j] += impulse * 0.5;
+                // Apply impulse based on mass ratios (heavier particles move less)
+                velocity_updates[i] -= impulse * mass_b;
+                velocity_updates[j] += impulse * mass_a;
             }
         }
     }
@@ -316,22 +355,27 @@ fn player_particle_interactions(
                 particle_transform.translation += separation * 0.9;
                 player_transform.translation -= separation * 0.1;
                 
-                // Transfer player momentum to particle - make this more aggressive
+                // Calculate mass-based interaction (player is much heavier)
+                let player_mass = 70.0; // kg - typical human mass
+                let particle_mass = particle.mass;
+                let mass_ratio = particle_mass / (player_mass + particle_mass);
+                
+                // Transfer player momentum to particle - scaled by mass difference
                 let player_speed = player_velocity.0.length();
                 if player_speed > 0.05 {
-                    // Player pushes particles in movement direction with more force
-                    let push_force = player_velocity.0.normalize() * (player_speed * 1.5);
+                    // Player pushes particles in movement direction, smaller particles get pushed more
+                    let push_force = player_velocity.0.normalize() * (player_speed * 2.0 / particle_mass.sqrt());
                     particle_velocity.0 += push_force;
                     
-                    // Player loses some momentum when hitting particles
-                    player_velocity.0 *= 0.98;
+                    // Player loses momentum proportional to particle mass
+                    player_velocity.0 *= 1.0 - (mass_ratio * 0.05);
                 } else {
-                    // Even when player is stationary, push particles away
+                    // Even when player is stationary, push particles away (smaller particles move more)
                     let push_direction = normal;
-                    particle_velocity.0 += push_direction * 3.0; // Stronger minimum push force
+                    particle_velocity.0 += push_direction * (4.0 / particle_mass.sqrt());
                 }
                 
-                // Add some bounce to the particle with more energy
+                // Add mass-based bounce to the particle
                 let relative_velocity = player_velocity.0 - particle_velocity.0;
                 let velocity_along_normal = relative_velocity.dot(normal);
                 
@@ -340,17 +384,17 @@ fn player_particle_interactions(
                     let impulse_scalar = -(1.0 + restitution) * velocity_along_normal;
                     let impulse = normal * impulse_scalar;
                     
-                    // Apply impulse (player is much heavier, so gets less effect)
-                    particle_velocity.0 += impulse * 0.9;
-                    player_velocity.0 -= impulse * 0.1;
+                    // Apply impulse based on mass ratios
+                    particle_velocity.0 += impulse * (1.0 - mass_ratio);
+                    player_velocity.0 -= impulse * mass_ratio;
                 }
             }
         }
         
-        // Debug output every few frames to see interaction count
-        if collision_count > 0 {
-            println!("Player interacting with {} particles", collision_count);
-        }
+        // // Debug output every few frames to see interaction count
+        // if collision_count > 0 {
+        //     println!("Player interacting with {} particles", collision_count);
+        // }
     }
 }
 
@@ -368,9 +412,9 @@ fn particle_physics(
         // Apply velocity to position
         transform.translation += velocity.0 * dt;
 
-        // Simple ground collision
-        if transform.translation.y <= PARTICLE_RADIUS {
-            transform.translation.y = PARTICLE_RADIUS;
+        // Simple ground collision using individual particle radius
+        if transform.translation.y <= _particle.radius {
+            transform.translation.y = _particle.radius;
             velocity.0.y = velocity.0.y.abs() * -0.2; // Bounce with energy loss
             velocity.0.x *= 0.95; // Reduced friction - particles slide more on lunar surface
             velocity.0.z *= 0.95; // Reduced friction - particles slide more on lunar surface
@@ -396,7 +440,7 @@ fn gpu_particle_physics(
             delta_time: time.delta_secs(),
             gravity: LUNAR_GRAVITY,
             particle_count: particle_count as u32,
-            ground_level: PARTICLE_RADIUS,
+            ground_level: MIN_PARTICLE_RADIUS,
             player_position: [
                 player_transform.translation.x,
                 player_transform.translation.y,
