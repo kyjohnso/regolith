@@ -31,8 +31,9 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 
 ### Phase 4: GPU Compute Architecture
 - [x] Design GPU compute shader architecture for particle physics
-- [x] Implement wgpu compute shader for particle position updates
-- [x] Test: Run cargo run to verify GPU compute integration (Architecture complete, data sync pending)
+- [x] Implement wgpu compute shader for particle position updates (Infrastructure only)
+- [ ] Complete GPU-CPU data synchronization for full GPU physics pipeline
+- [ ] Test: Run cargo run to verify GPU compute integration (GPU physics working)
 - [ ] Add GPU-based spatial hashing for efficient collision detection
 - [ ] Implement GPU sphere-sphere collision response system
 - [ ] Test: Run cargo run to verify GPU physics pipeline
