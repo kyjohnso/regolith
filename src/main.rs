@@ -10,10 +10,10 @@ const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 1000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 10000; // Reduce for better visibility of interactions
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
-const SPAWN_AREA_SIZE: f32 = 2.0; // Spawn even closer to player for testing
+const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
 
 // GPU compute toggle
 const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
