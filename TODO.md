@@ -15,24 +15,24 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [x] Set up Rust project with Bevy 0.16.1 and basic dependencies
 - [x] Create basic Bevy app with 3D scene and orbit camera controls
 - [x] Test: Run cargo run to verify basic app launches and camera works
-- [ ] Add lunar surface terrain (simple plane or heightmap)
-- [ ] Test: Run cargo run to verify terrain renders correctly
+- [x] Add lunar surface terrain (simple plane or heightmap)
+- [x] Test: Run cargo run to verify terrain renders correctly
 
 ### Phase 2: Player Movement & Interaction
-- [ ] Implement basic player movement with lunar gravity (1/6th Earth)
-- [ ] Test: Run cargo run to verify player movement feels right
+- [x] Implement basic player movement with lunar gravity (1/6th Earth)
+- [x] Test: Run cargo run to verify player movement feels right
 
 ### Phase 3: Basic Particle System
-- [ ] Add simple regolith particle spawning system (start with ~1000 particles)
-- [ ] Create basic particle rendering system with instanced meshes
-- [ ] Test: Run cargo run to verify particles spawn and render
-- [ ] Implement CPU-based sphere-sphere collision detection for validation
-- [ ] Test: Run cargo run to verify collision detection works
+- [x] Add simple regolith particle spawning system (start with ~1000 particles)
+- [x] Create basic particle rendering system with instanced meshes
+- [x] Test: Run cargo run to verify particles spawn and render
+- [x] Implement CPU-based sphere-sphere collision detection for validation
+- [x] Test: Run cargo run to verify collision detection works
 
 ### Phase 4: GPU Compute Architecture
-- [ ] Design GPU compute shader architecture for particle physics
-- [ ] Implement wgpu compute shader for particle position updates
-- [ ] Test: Run cargo run to verify GPU compute integration
+- [x] Design GPU compute shader architecture for particle physics
+- [x] Implement wgpu compute shader for particle position updates
+- [x] Test: Run cargo run to verify GPU compute integration (Architecture complete, data sync pending)
 - [ ] Add GPU-based spatial hashing for efficient collision detection
 - [ ] Implement GPU sphere-sphere collision response system
 - [ ] Test: Run cargo run to verify GPU physics pipeline

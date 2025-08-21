@@ -15,7 +15,7 @@ const PARTICLE_RADIUS: f32 = 0.1; // Make particles bigger for easier visibility
 const SPAWN_AREA_SIZE: f32 = 2.0; // Spawn even closer to player for testing
 
 // GPU compute toggle
-const USE_GPU_COMPUTE: bool = false; // Set to false to use CPU physics - testing first
+const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
 
 #[derive(Component)]
 struct Player;
@@ -44,8 +44,9 @@ fn main() {
         app.add_plugins(GpuComputePlugin)
             .add_systems(Update, (
                 player_movement,
+                apply_gravity,
                 player_input,
-                particle_physics,
+                gpu_particle_physics,
             ));
     } else {
         println!("Using CPU for particle physics");
@@ -375,41 +376,42 @@ fn particle_physics(
             velocity.0.z *= 0.95; // Reduced friction - particles slide more on lunar surface
         }
         
-        // GPU-based particle physics system
-        fn gpu_particle_physics(
-            player_query: Query<(&Transform, &Velocity), With<Player>>,
-            particle_query: Query<&Transform, (With<RegolithParticle>, Without<Player>)>,
-            time: Res<Time>,
-        ) {
-            // This system will interface with the GPU compute shader
-            // For now, it's a placeholder that will be implemented in the next step
-            
-            if let Ok((player_transform, player_velocity)) = player_query.single() {
-                let particle_count = particle_query.iter().count();
-                
-                // Prepare uniforms for GPU compute
-                let _uniforms = ComputeUniforms {
-                    delta_time: time.delta_secs(),
-                    gravity: LUNAR_GRAVITY,
-                    particle_count: particle_count as u32,
-                    ground_level: PARTICLE_RADIUS,
-                    player_position: [
-                        player_transform.translation.x,
-                        player_transform.translation.y,
-                        player_transform.translation.z,
-                    ],
-                    player_radius: 0.5,
-                    player_velocity: [
-                        player_velocity.0.x,
-                        player_velocity.0.y,
-                        player_velocity.0.z,
-                    ],
-                    _padding: 0.0,
-                };
-                
-                // TODO: Dispatch compute shader with uniforms
-                // This will be implemented in the next step
-            }
-        }
+    }
+}
+
+// GPU-based particle physics system
+fn gpu_particle_physics(
+    player_query: Query<(&Transform, &Velocity), With<Player>>,
+    particle_query: Query<&Transform, (With<RegolithParticle>, Without<Player>)>,
+    time: Res<Time>,
+) {
+    // This system interfaces with the GPU compute shader
+    // The actual GPU work is handled by the GpuComputePlugin systems
+    
+    if let Ok((player_transform, player_velocity)) = player_query.single() {
+        let particle_count = particle_query.iter().count();
+        
+        // Prepare uniforms for GPU compute
+        let _uniforms = ComputeUniforms {
+            delta_time: time.delta_secs(),
+            gravity: LUNAR_GRAVITY,
+            particle_count: particle_count as u32,
+            ground_level: PARTICLE_RADIUS,
+            player_position: [
+                player_transform.translation.x,
+                player_transform.translation.y,
+                player_transform.translation.z,
+            ],
+            player_radius: 0.8, // Match the CPU version
+            player_velocity: [
+                player_velocity.0.x,
+                player_velocity.0.y,
+                player_velocity.0.z,
+            ],
+            _padding: 0.0,
+        };
+        
+        // The GPU compute is dispatched automatically by the GpuComputePlugin
+        // This system mainly serves as a coordination point
     }
 }

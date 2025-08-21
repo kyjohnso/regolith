@@ -3,6 +3,7 @@ use bevy::render::render_resource::*;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{RenderApp, Render};
 use bytemuck::{Pod, Zeroable};
+use crate::Velocity;
 
 // GPU-compatible particle data structure
 #[repr(C)]
@@ -54,11 +55,27 @@ pub struct GpuComputeResources {
     pub compute_pipeline: ComputePipeline,
 }
 
+// Resource to track GPU particle data
+#[derive(Resource, Default)]
+pub struct GpuParticleData {
+    pub particles: Vec<GpuParticle>,
+    pub needs_update: bool,
+}
+
 // Plugin for GPU compute
 pub struct GpuComputePlugin;
 
 impl Plugin for GpuComputePlugin {
     fn build(&self, app: &mut App) {
+        // Add resource to main app
+        app.init_resource::<GpuParticleData>();
+        
+        // Add systems to main app for data preparation
+        app.add_systems(Update, (
+            prepare_gpu_particle_data,
+            update_gpu_uniforms,
+        ));
+        
         // Add systems to the render app
         let render_app = app.sub_app_mut(RenderApp);
         render_app.add_systems(
@@ -205,4 +222,71 @@ fn dispatch_compute_shader(
 
     // Submit commands
     render_queue.submit(std::iter::once(encoder.finish()));
+}
+
+// System to prepare GPU particle data from CPU particles
+fn prepare_gpu_particle_data(
+    particle_query: Query<(&Transform, &Velocity, &crate::RegolithParticle), Without<crate::Player>>,
+    mut gpu_data: ResMut<GpuParticleData>,
+) {
+    // Convert CPU particles to GPU format
+    gpu_data.particles.clear();
+    
+    for (transform, velocity, particle) in particle_query.iter() {
+        gpu_data.particles.push(GpuParticle {
+            position: [
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z,
+            ],
+            _padding1: 0.0,
+            velocity: [velocity.0.x, velocity.0.y, velocity.0.z],
+            _padding2: 0.0,
+            radius: particle.radius,
+            mass: particle.mass,
+            _padding3: [0.0, 0.0],
+        });
+    }
+    
+    gpu_data.needs_update = true;
+}
+
+// System to update GPU uniforms
+fn update_gpu_uniforms(
+    player_query: Query<(&Transform, &Velocity), With<crate::Player>>,
+    time: Res<Time>,
+    mut gpu_data: ResMut<GpuParticleData>,
+) {
+    if let Ok((player_transform, player_velocity)) = player_query.single() {
+        // Store uniforms in the GPU data resource for the render app to access
+        // This is a simplified approach - in a full implementation, we'd use proper
+        // resource extraction between main and render apps
+        gpu_data.needs_update = true;
+    }
+}
+
+// System to upload particle data to GPU
+fn upload_particle_data(
+    gpu_resources: Res<GpuComputeResources>,
+    gpu_data: Res<GpuParticleData>,
+    render_queue: Res<RenderQueue>,
+) {
+    if gpu_data.needs_update && !gpu_data.particles.is_empty() {
+        // Upload particle data to GPU buffer
+        let particle_data = bytemuck::cast_slice(&gpu_data.particles);
+        render_queue.write_buffer(
+            &gpu_resources.particle_buffer,
+            0,
+            particle_data,
+        );
+    }
+}
+
+// System to read back particle data from GPU (for CPU-GPU hybrid approach)
+fn read_back_particle_data(
+    // This would be implemented for reading back GPU results
+    // For now, it's a placeholder for the complete GPU compute pipeline
+) {
+    // TODO: Implement GPU -> CPU data transfer for hybrid physics
+    // This would involve creating staging buffers and reading back results
 }
