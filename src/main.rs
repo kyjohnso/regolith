@@ -1,15 +1,21 @@
 use bevy::prelude::*;
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 
+mod gpu_compute;
+use gpu_compute::{GpuComputePlugin, ComputeUniforms};
+
 // Lunar gravity constant (1/6th of Earth's gravity)
 const LUNAR_GRAVITY: f32 = -1.62; // m/s²
-const PLAYER_SPEED: f32 = 5.0;
-const JUMP_IMPULSE: f32 = 8.0;
+const PLAYER_SPEED: f32 =2.0;
+const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 1000;
+const PARTICLE_COUNT: usize = 1000; // Reduce for better visibility of interactions
 const PARTICLE_RADIUS: f32 = 0.1; // Make particles bigger for easier visibility
-const SPAWN_AREA_SIZE: f32 = 10.0; // Spawn closer to player
+const SPAWN_AREA_SIZE: f32 = 2.0; // Spawn even closer to player for testing
+
+// GPU compute toggle
+const USE_GPU_COMPUTE: bool = false; // Set to false to use CPU physics - testing first
 
 #[derive(Component)]
 struct Player;
@@ -27,19 +33,33 @@ struct RegolithParticle {
 }
 
 fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
+    let mut app = App::new();
+    
+    app.add_plugins(DefaultPlugins)
         .add_plugins(PanOrbitCameraPlugin)
-        .add_systems(Startup, (setup, spawn_regolith_particles))
-        .add_systems(Update, (
+        .add_systems(Startup, (setup, spawn_regolith_particles));
+    
+    if USE_GPU_COMPUTE {
+        println!("Using GPU compute for particle physics");
+        app.add_plugins(GpuComputePlugin)
+            .add_systems(Update, (
+                player_movement,
+                player_input,
+                particle_physics,
+            ));
+    } else {
+        println!("Using CPU for particle physics");
+        app.add_systems(Update, (
             player_movement,
             apply_gravity,
             player_input,
             particle_physics,
             particle_collisions,
             player_particle_interactions,
-        ))
-        .run();
+        ));
+    }
+    
+    app.run();
 }
 
 fn setup(
@@ -89,7 +109,7 @@ fn setup(
     // Add orbit camera
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-4.0, 4.5, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         PanOrbitCamera::default(),
     ));
 }
@@ -97,7 +117,7 @@ fn setup(
 fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_query: Query<(&mut Velocity, &Grounded), With<Player>>,
-    time: Res<Time>,
+    _time: Res<Time>,
 ) {
     for (mut velocity, grounded) in &mut player_query {
         let mut movement = Vec3::ZERO;
@@ -273,15 +293,15 @@ fn player_particle_interactions(
 ) {
     // Get player data
     if let Ok((mut player_transform, mut player_velocity)) = player_query.single_mut() {
-        let player_radius = 0.5; // Approximate radius for the capsule player
-        let mut _collision_count = 0;
+        let player_radius = 0.8; // Increase player interaction radius to push more particles
+        let mut collision_count = 0;
         
         // Check collisions with all particles
         for (mut particle_transform, mut particle_velocity, particle) in particle_query.iter_mut() {
             let distance = player_transform.translation.distance(particle_transform.translation);
             let min_distance = player_radius + particle.radius;
             
-            // Check for collision
+            // Check for collision or close proximity
             if distance < min_distance && distance > 0.0 {
                 collision_count += 1;
                 // Calculate collision normal (from player to particle)
@@ -292,41 +312,44 @@ fn player_particle_interactions(
                 let separation = normal * overlap;
                 
                 // Move particle away from player (player is much heavier)
-                particle_transform.translation += separation * 0.8;
-                player_transform.translation -= separation * 0.2;
+                particle_transform.translation += separation * 0.9;
+                player_transform.translation -= separation * 0.1;
                 
-                // Transfer some player momentum to particle
+                // Transfer player momentum to particle - make this more aggressive
                 let player_speed = player_velocity.0.length();
-                if player_speed > 0.1 {
-                    // Player pushes particles in movement direction
-                    let push_force = player_velocity.0.normalize() * (player_speed * 0.5);
+                if player_speed > 0.05 {
+                    // Player pushes particles in movement direction with more force
+                    let push_force = player_velocity.0.normalize() * (player_speed * 1.5);
                     particle_velocity.0 += push_force;
                     
                     // Player loses some momentum when hitting particles
-                    player_velocity.0 *= 0.95;
+                    player_velocity.0 *= 0.98;
                 } else {
-                    // Even when player is moving slowly, give particles a small push
+                    // Even when player is stationary, push particles away
                     let push_direction = normal;
-                    particle_velocity.0 += push_direction * 2.0; // Minimum push force
+                    particle_velocity.0 += push_direction * 3.0; // Stronger minimum push force
                 }
                 
-                // Add some bounce to the particle
+                // Add some bounce to the particle with more energy
                 let relative_velocity = player_velocity.0 - particle_velocity.0;
                 let velocity_along_normal = relative_velocity.dot(normal);
                 
                 if velocity_along_normal < 0.0 {
-                    let restitution = 0.3;
+                    let restitution = 0.5; // More bouncy
                     let impulse_scalar = -(1.0 + restitution) * velocity_along_normal;
                     let impulse = normal * impulse_scalar;
                     
                     // Apply impulse (player is much heavier, so gets less effect)
-                    particle_velocity.0 += impulse * 0.8;
-                    player_velocity.0 -= impulse * 0.2;
+                    particle_velocity.0 += impulse * 0.9;
+                    player_velocity.0 -= impulse * 0.1;
                 }
             }
         }
         
-        // Collision system working - debug output removed for performance
+        // Debug output every few frames to see interaction count
+        if collision_count > 0 {
+            println!("Player interacting with {} particles", collision_count);
+        }
     }
 }
 
@@ -350,6 +373,43 @@ fn particle_physics(
             velocity.0.y = velocity.0.y.abs() * -0.2; // Bounce with energy loss
             velocity.0.x *= 0.95; // Reduced friction - particles slide more on lunar surface
             velocity.0.z *= 0.95; // Reduced friction - particles slide more on lunar surface
+        }
+        
+        // GPU-based particle physics system
+        fn gpu_particle_physics(
+            player_query: Query<(&Transform, &Velocity), With<Player>>,
+            particle_query: Query<&Transform, (With<RegolithParticle>, Without<Player>)>,
+            time: Res<Time>,
+        ) {
+            // This system will interface with the GPU compute shader
+            // For now, it's a placeholder that will be implemented in the next step
+            
+            if let Ok((player_transform, player_velocity)) = player_query.single() {
+                let particle_count = particle_query.iter().count();
+                
+                // Prepare uniforms for GPU compute
+                let _uniforms = ComputeUniforms {
+                    delta_time: time.delta_secs(),
+                    gravity: LUNAR_GRAVITY,
+                    particle_count: particle_count as u32,
+                    ground_level: PARTICLE_RADIUS,
+                    player_position: [
+                        player_transform.translation.x,
+                        player_transform.translation.y,
+                        player_transform.translation.z,
+                    ],
+                    player_radius: 0.5,
+                    player_velocity: [
+                        player_velocity.0.x,
+                        player_velocity.0.y,
+                        player_velocity.0.z,
+                    ],
+                    _padding: 0.0,
+                };
+                
+                // TODO: Dispatch compute shader with uniforms
+                // This will be implemented in the next step
+            }
         }
     }
 }
