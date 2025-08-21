@@ -15,6 +15,13 @@ const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
 
+// Damping constants
+const VELOCITY_DAMPING: f32 = 0.95; // General velocity damping (very aggressive to reduce jittering)
+const COLLISION_DAMPING: f32 = 0.6; // Additional damping after collisions (very aggressive)
+const MIN_VELOCITY_THRESHOLD: f32 = 0.08; // Velocities below this are set to zero (higher threshold)
+const GROUND_DAMPING: f32 = 0.85; // Additional damping for particles near ground
+const ANGULAR_DAMPING: f32 = 0.9; // For rotational motion if we add it later
+
 // GPU compute toggle
 const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
 
@@ -58,6 +65,7 @@ fn main() {
             particle_physics,
             particle_collisions,
             player_particle_interactions,
+            monitor_particle_stability,
         ));
     }
     
@@ -322,8 +330,18 @@ fn particle_collisions(
         transform.translation += position_updates[i];
         velocity.0 += velocity_updates[i];
         
-        // Add some damping to simulate energy loss
-        velocity.0 *= 0.98;
+        // Apply collision damping if there was a collision
+        if velocity_updates[i].length() > 0.001 {
+            velocity.0 *= COLLISION_DAMPING;
+        }
+        
+        // Apply general velocity damping to simulate energy loss
+        velocity.0 *= VELOCITY_DAMPING;
+        
+        // Clamp very small velocities to zero to prevent micro-jittering
+        if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
+            velocity.0 = Vec3::ZERO;
+        }
     }
 }
 
@@ -387,6 +405,14 @@ fn player_particle_interactions(
                     // Apply impulse based on mass ratios
                     particle_velocity.0 += impulse * (1.0 - mass_ratio);
                     player_velocity.0 -= impulse * mass_ratio;
+                    
+                    // Additional damping after player collision to reduce jittering
+                    particle_velocity.0 *= COLLISION_DAMPING;
+                }
+                
+                // Clamp small velocities to prevent micro-jittering after player interaction
+                if particle_velocity.0.length() < MIN_VELOCITY_THRESHOLD {
+                    particle_velocity.0 = Vec3::ZERO;
                 }
             }
         }
@@ -418,8 +444,35 @@ fn particle_physics(
             velocity.0.y = velocity.0.y.abs() * -0.2; // Bounce with energy loss
             velocity.0.x *= 0.95; // Reduced friction - particles slide more on lunar surface
             velocity.0.z *= 0.95; // Reduced friction - particles slide more on lunar surface
+            
+            // Additional damping after ground collision to prevent bouncing jitter
+            velocity.0 *= COLLISION_DAMPING;
         }
         
+        // Apply general velocity damping
+        velocity.0 *= VELOCITY_DAMPING;
+        
+        // Clamp very small velocities to zero to prevent micro-jittering
+        if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
+            velocity.0 = Vec3::ZERO;
+        }
+        
+        // Additional stability check: if particle is very close to ground and moving slowly
+        if transform.translation.y <= _particle.radius + 0.02 {
+            // Apply extra damping for particles near ground
+            velocity.0 *= GROUND_DAMPING;
+            
+            // Stop vertical jittering near ground
+            if velocity.0.y.abs() < 0.1 {
+                velocity.0.y = 0.0;
+            }
+            
+            // Stop horizontal micro-movements near ground
+            if velocity.0.xz().length() < 0.05 {
+                velocity.0.x = 0.0;
+                velocity.0.z = 0.0;
+            }
+        }
     }
 }
 
@@ -457,5 +510,54 @@ fn gpu_particle_physics(
         
         // The GPU compute is dispatched automatically by the GpuComputePlugin
         // This system mainly serves as a coordination point
+    }
+}
+
+// System to monitor particle stability and detect excessive jittering
+fn monitor_particle_stability(
+    particle_query: Query<&Velocity, With<RegolithParticle>>,
+    time: Res<Time>,
+) {
+    // Only run this check every 2 seconds to avoid performance impact
+    if time.elapsed_secs() % 2.0 < time.delta_secs() {
+        let mut high_frequency_particles = 0;
+        let mut micro_motion_particles = 0;
+        let mut stationary_particles = 0;
+        let mut total_kinetic_energy = 0.0;
+        let particle_count = particle_query.iter().count();
+        
+        for velocity in particle_query.iter() {
+            let speed = velocity.0.length();
+            total_kinetic_energy += speed * speed;
+            
+            // Count particles with different motion types
+            if speed < MIN_VELOCITY_THRESHOLD {
+                stationary_particles += 1;
+            } else if speed > 0.05 && speed < 0.3 {
+                micro_motion_particles += 1;
+            } else if speed > 0.3 {
+                high_frequency_particles += 1;
+            }
+        }
+        
+        let avg_kinetic_energy = if particle_count > 0 {
+            total_kinetic_energy / particle_count as f32
+        } else {
+            0.0
+        };
+        
+        let jitter_percentage = (micro_motion_particles as f32 / particle_count as f32) * 100.0;
+        let stationary_percentage = (stationary_particles as f32 / particle_count as f32) * 100.0;
+        
+        // Log stability metrics
+        println!("Particle stability: {:.1}% stationary, {:.1}% micro-motion, {} active, avg KE: {:.4}",
+                 stationary_percentage, jitter_percentage, high_frequency_particles, avg_kinetic_energy);
+        
+        // Only warn if jittering is excessive
+        if jitter_percentage > 50.0 {
+            println!("WARNING: High jittering detected - {:.1}% of particles have micro-motion", jitter_percentage);
+        } else if jitter_percentage < 10.0 {
+            println!("SUCCESS: Low jittering - only {:.1}% of particles have micro-motion", jitter_percentage);
+        }
     }
 }

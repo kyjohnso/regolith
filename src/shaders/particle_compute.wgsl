@@ -25,7 +25,11 @@ struct ComputeUniforms {
 const LUNAR_GRAVITY: f32 = -1.62;
 const RESTITUTION: f32 = 0.2;
 const FRICTION: f32 = 0.95;
-const MIN_VELOCITY: f32 = 0.001;
+const MIN_VELOCITY: f32 = 0.08;
+const VELOCITY_DAMPING: f32 = 0.95;
+const COLLISION_DAMPING: f32 = 0.6;
+const GROUND_STABILITY_THRESHOLD: f32 = 0.1;
+const GROUND_DAMPING: f32 = 0.85;
 
 @compute @workgroup_size(64, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -44,12 +48,20 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Update position
     particle.position += particle.velocity * uniforms.delta_time;
     
-    // Ground collision
+    // Ground collision with improved damping
     if (particle.position.y <= particle.radius) {
         particle.position.y = particle.radius;
         particle.velocity.y = abs(particle.velocity.y) * -RESTITUTION;
         particle.velocity.x *= FRICTION;
         particle.velocity.z *= FRICTION;
+        
+        // Additional collision damping to prevent bouncing jitter
+        particle.velocity *= COLLISION_DAMPING;
+        
+        // Stop micro-bouncing near ground
+        if (abs(particle.velocity.y) < GROUND_STABILITY_THRESHOLD) {
+            particle.velocity.y = 0.0;
+        }
     }
     
     // Player collision
@@ -119,12 +131,29 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // Apply damping to simulate energy loss
-    particle.velocity *= 0.98;
+    // Apply progressive damping to simulate energy loss
+    particle.velocity *= VELOCITY_DAMPING;
     
-    // Clamp very small velocities to zero
+    // Clamp very small velocities to zero to prevent micro-jittering
     if (length(particle.velocity) < MIN_VELOCITY) {
         particle.velocity = vec3<f32>(0.0, 0.0, 0.0);
+    }
+    
+    // Additional stability for particles near ground
+    if (particle.position.y <= particle.radius + 0.02) {
+        // Apply extra damping for particles near ground
+        particle.velocity *= GROUND_DAMPING;
+        
+        // Stop vertical jittering near ground
+        if (abs(particle.velocity.y) < GROUND_STABILITY_THRESHOLD) {
+            particle.velocity.y = 0.0;
+        }
+        
+        // Stop horizontal micro-movements near ground
+        if (length(particle.velocity.xz) < 0.05) {
+            particle.velocity.x = 0.0;
+            particle.velocity.z = 0.0;
+        }
     }
     
     // Write back the updated particle
