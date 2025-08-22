@@ -6,12 +6,12 @@ mod gpu_compute;
 use gpu_compute::{GpuComputePlugin, ComputeUniforms};
 
 // Lunar gravity constant (1/6th of Earth's gravity)
-const LUNAR_GRAVITY: f32 = -1.62; // m/s²
+const LUNAR_GRAVITY: f32 = -2.6; //-1.62; // m/s²
 const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 1000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 5000; // Reduce for better visibility of interactions
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
@@ -84,9 +84,9 @@ fn main() {
     } else {
         println!("Using CPU for particle physics");
         app.add_systems(Update, (
-            player_movement,
-            apply_gravity,
             player_input,
+            apply_gravity,
+            player_movement,
             particle_physics,
             particle_collisions,
             player_particle_interactions,
@@ -364,8 +364,15 @@ fn particle_collisions(
         velocity.0 *= VELOCITY_DAMPING;
         
         // Clamp very small velocities to zero to prevent micro-jittering
+        // BUT preserve gravity effects by only zeroing horizontal components
         if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
-            velocity.0 = Vec3::ZERO;
+            // Only zero out horizontal movement, preserve vertical (gravity) component
+            velocity.0.x = 0.0;
+            velocity.0.z = 0.0;
+            // Keep y-component for gravity unless it's also very small
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.5 {
+                velocity.0.y = 0.0;
+            }
         }
     }
 }
@@ -436,8 +443,15 @@ fn player_particle_interactions(
                 }
                 
                 // Clamp small velocities to prevent micro-jittering after player interaction
+                // BUT preserve gravity effects by only zeroing horizontal components
                 if particle_velocity.0.length() < MIN_VELOCITY_THRESHOLD {
-                    particle_velocity.0 = Vec3::ZERO;
+                    // Only zero out horizontal movement, preserve vertical (gravity) component
+                    particle_velocity.0.x = 0.0;
+                    particle_velocity.0.z = 0.0;
+                    // Keep y-component for gravity unless it's also very small
+                    if particle_velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.5 {
+                        particle_velocity.0.y = 0.0;
+                    }
                 }
             }
         }
@@ -478,8 +492,15 @@ fn particle_physics(
         velocity.0 *= VELOCITY_DAMPING;
         
         // Clamp very small velocities to zero to prevent micro-jittering
+        // BUT preserve gravity effects by only zeroing horizontal components
         if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
-            velocity.0 = Vec3::ZERO;
+            // Only zero out horizontal movement, preserve vertical (gravity) component
+            velocity.0.x = 0.0;
+            velocity.0.z = 0.0;
+            // Keep y-component for gravity unless it's also very small
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.5 {
+                velocity.0.y = 0.0;
+            }
         }
         
         // Additional stability check: if particle is very close to ground and moving slowly
