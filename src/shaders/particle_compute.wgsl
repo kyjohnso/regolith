@@ -21,8 +21,22 @@ struct ComputeUniforms {
     player_velocity: vec3<f32>,
 }
 
+struct SpatialHashUniforms {
+    grid_size: vec3<u32>,
+    cell_size: f32,
+    world_min: vec3<f32>,
+    world_max: vec3<f32>,
+}
+
+struct HashCell {
+    particle_count: u32,
+    particle_indices: array<u32, 32>,
+}
+
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> uniforms: ComputeUniforms;
+@group(0) @binding(2) var<uniform> spatial_uniforms: SpatialHashUniforms;
+@group(0) @binding(3) var<storage, read> spatial_hash: array<HashCell>;
 
 // Constants
 const LUNAR_GRAVITY: f32 = -1.62;
@@ -33,6 +47,25 @@ const VELOCITY_DAMPING: f32 = 0.95;
 const COLLISION_DAMPING: f32 = 0.6;
 const GROUND_STABILITY_THRESHOLD: f32 = 0.1;
 const GROUND_DAMPING: f32 = 0.85;
+const PARTICLE_RESTITUTION: f32 = 0.4;
+const PARTICLE_FRICTION: f32 = 0.8;
+const SEPARATION_FORCE: f32 = 0.9;
+
+// Hash function for 3D position to grid cell
+fn hash_position(pos: vec3<f32>) -> vec3<u32> {
+    let grid_pos = (pos - spatial_uniforms.world_min) / spatial_uniforms.cell_size;
+    return vec3<u32>(
+        clamp(u32(grid_pos.x), 0u, spatial_uniforms.grid_size.x - 1u),
+        clamp(u32(grid_pos.y), 0u, spatial_uniforms.grid_size.y - 1u),
+        clamp(u32(grid_pos.z), 0u, spatial_uniforms.grid_size.z - 1u)
+    );
+}
+
+// Convert 3D grid coordinates to 1D array index
+fn grid_to_index(grid_pos: vec3<u32>) -> u32 {
+    return grid_pos.x + grid_pos.y * spatial_uniforms.grid_size.x +
+           grid_pos.z * spatial_uniforms.grid_size.x * spatial_uniforms.grid_size.y;
+}
 
 @compute @workgroup_size(64, 1, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -100,9 +133,81 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // Particle-to-particle collisions (DISABLED for now - O(n²) too expensive)
-    // Will be replaced with spatial hashing for efficiency
-    // TODO: Implement GPU spatial hashing for particle-particle collisions
+    // Particle-to-particle collisions using spatial hashing
+    let particle_grid_pos = hash_position(particle.position);
+    
+    // Check neighboring cells (3x3x3 = 27 cells)
+    for (var dx: i32 = -1; dx <= 1; dx++) {
+        for (var dy: i32 = -1; dy <= 1; dy++) {
+            for (var dz: i32 = -1; dz <= 1; dz++) {
+                let neighbor_grid = vec3<i32>(
+                    i32(particle_grid_pos.x) + dx,
+                    i32(particle_grid_pos.y) + dy,
+                    i32(particle_grid_pos.z) + dz
+                );
+                
+                // Check bounds
+                if (neighbor_grid.x < 0 || neighbor_grid.y < 0 || neighbor_grid.z < 0 ||
+                    neighbor_grid.x >= i32(spatial_uniforms.grid_size.x) ||
+                    neighbor_grid.y >= i32(spatial_uniforms.grid_size.y) ||
+                    neighbor_grid.z >= i32(spatial_uniforms.grid_size.z)) {
+                    continue;
+                }
+                
+                let neighbor_grid_u = vec3<u32>(
+                    u32(neighbor_grid.x),
+                    u32(neighbor_grid.y),
+                    u32(neighbor_grid.z)
+                );
+                
+                let cell_index = grid_to_index(neighbor_grid_u);
+                let cell = spatial_hash[cell_index];
+                
+                // Check collisions with particles in this cell
+                for (var i: u32 = 0u; i < cell.particle_count; i++) {
+                    let other_index = cell.particle_indices[i];
+                    
+                    // Skip self-collision
+                    if (other_index == index) {
+                        continue;
+                    }
+                    
+                    let other_particle = particles[other_index];
+                    let distance_vec = particle.position - other_particle.position;
+                    let distance = length(distance_vec);
+                    let min_distance = particle.radius + other_particle.radius;
+                    
+                    // Collision detected
+                    if (distance < min_distance && distance > 0.0) {
+                        let normal = normalize(distance_vec);
+                        let overlap = min_distance - distance;
+                        
+                        // Separate particles
+                        particle.position += normal * overlap * SEPARATION_FORCE * 0.5;
+                        
+                        // Calculate relative velocity
+                        let relative_velocity = particle.velocity - other_particle.velocity;
+                        let velocity_along_normal = dot(relative_velocity, normal);
+                        
+                        // Only resolve if particles are moving towards each other
+                        if (velocity_along_normal < 0.0) {
+                            // Calculate impulse
+                            let total_mass = particle.mass + other_particle.mass;
+                            var impulse_magnitude = -(1.0 + PARTICLE_RESTITUTION) * velocity_along_normal;
+                            impulse_magnitude *= (2.0 * other_particle.mass) / total_mass;
+                            
+                            let impulse = normal * impulse_magnitude;
+                            particle.velocity += impulse;
+                            
+                            // Apply friction
+                            let tangent_velocity = relative_velocity - normal * velocity_along_normal;
+                            particle.velocity -= tangent_velocity * PARTICLE_FRICTION * 0.1;
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     // Apply progressive damping to simulate energy loss
     particle.velocity *= VELOCITY_DAMPING;
