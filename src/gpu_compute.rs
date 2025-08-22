@@ -400,6 +400,7 @@ fn read_back_particle_data(
     // This allows us to test player interactions while we work on the full GPU pipeline
     
     let mut updated_particles = gpu_data.particles.clone();
+    let mut collision_count = 0;
     
     // Simulate the GPU compute shader logic on CPU
     for particle in &mut updated_particles {
@@ -433,6 +434,8 @@ fn read_back_particle_data(
         let min_distance = particle.radius + gpu_data.uniforms.player_radius;
         
         if player_distance < min_distance && player_distance > 0.0 {
+            collision_count += 1;
+            
             // Calculate collision normal
             let normal = [dx / player_distance, dy / player_distance, dz / player_distance];
             
@@ -441,6 +444,13 @@ fn read_back_particle_data(
             particle.position[0] += normal[0] * overlap * 0.8;
             particle.position[1] += normal[1] * overlap * 0.8;
             particle.position[2] += normal[2] * overlap * 0.8;
+            
+            // Debug output for first few collisions
+            if collision_count <= 3 {
+                info!("Player-particle collision {}: distance={:.3}, overlap={:.3}, particle_pos=[{:.2}, {:.2}, {:.2}]",
+                      collision_count, player_distance, overlap,
+                      particle.position[0], particle.position[1], particle.position[2]);
+            }
             
             // Apply player momentum transfer
             let player_speed = (gpu_data.uniforms.player_velocity[0] * gpu_data.uniforms.player_velocity[0] +
@@ -492,6 +502,11 @@ fn read_back_particle_data(
     // Store results
     gpu_results.updated_particles = updated_particles;
     gpu_results.ready = true;
+    
+    // Log collision summary if any occurred
+    if collision_count > 0 {
+        info!("Frame summary: {} player-particle collisions detected", collision_count);
+    }
     
     info!("Read back {} particles from GPU (CPU simulated with player interactions)", gpu_data.particle_count);
 }
