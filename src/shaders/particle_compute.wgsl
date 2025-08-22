@@ -3,9 +3,12 @@
 
 struct Particle {
     position: vec3<f32>,
+    _padding1: f32,
     velocity: vec3<f32>,
+    _padding2: f32,
     radius: f32,
     mass: f32,
+    _padding3: vec2<f32>,
 }
 
 struct ComputeUniforms {
@@ -97,39 +100,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
     
-    // Particle-to-particle collisions (simplified for now)
-    // Note: This is O(n²) and will be replaced with spatial hashing
-    for (var i: u32 = 0u; i < uniforms.particle_count; i++) {
-        if (i == index) {
-            continue;
-        }
-        
-        let other = particles[i];
-        let distance_vec = particle.position - other.position;
-        let distance = length(distance_vec);
-        let min_dist = particle.radius + other.radius;
-        
-        if (distance < min_dist && distance > 0.0) {
-            let normal = normalize(distance_vec);
-            let overlap = min_dist - distance;
-            
-            // Separate particles
-            particle.position += normal * (overlap * 0.5);
-            
-            // Simple collision response
-            let relative_velocity = particle.velocity - other.velocity;
-            let velocity_along_normal = dot(relative_velocity, normal);
-            
-            if (velocity_along_normal > 0.0) {
-                continue;
-            }
-            
-            let impulse_scalar = -(1.0 + RESTITUTION) * velocity_along_normal;
-            let impulse = normal * impulse_scalar * 0.5;
-            
-            particle.velocity -= impulse;
-        }
-    }
+    // Particle-to-particle collisions (DISABLED for now - O(n²) too expensive)
+    // Will be replaced with spatial hashing for efficiency
+    // TODO: Implement GPU spatial hashing for particle-particle collisions
     
     // Apply progressive damping to simulate energy loss
     particle.velocity *= VELOCITY_DAMPING;

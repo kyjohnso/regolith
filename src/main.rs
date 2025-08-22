@@ -6,13 +6,13 @@ mod gpu_compute;
 use gpu_compute::{GpuComputePlugin, ComputeUniforms};
 
 // Lunar gravity constant (1/6th of Earth's gravity)
-const LUNAR_GRAVITY: f32 = -2.6; //-1.62; // m/s²
+pub const LUNAR_GRAVITY: f32 = -2.6; //-1.62; // m/s²
 const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 6000; // Reduce for better visibility of interactions
-const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
+pub const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
 
@@ -24,7 +24,7 @@ const GROUND_DAMPING: f32 = 0.85; // Additional damping for particles near groun
 const ANGULAR_DAMPING: f32 = 0.9; // For rotational motion if we add it later
 
 // GPU compute toggle
-const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
+const USE_GPU_COMPUTE: bool = true; // GPU integration is now complete!
 
 #[derive(Component)]
 struct Player;
