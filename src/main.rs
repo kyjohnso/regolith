@@ -11,7 +11,7 @@ const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 5000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 6000; // Reduce for better visibility of interactions
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
@@ -638,8 +638,14 @@ fn fps_tracker_system(
 
 // Setup FPS UI overlay
 fn setup_fps_ui(mut commands: Commands) {
-    // Create UI camera
-    commands.spawn(Camera2d);
+    // Create UI camera with higher priority to render on top
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1, // Higher priority than the 3D camera (which defaults to 0)
+            ..default()
+        },
+    ));
     
     // Create FPS text overlay
     commands.spawn((
