@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use std::collections::VecDeque;
 
@@ -11,7 +12,7 @@ const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 6000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 5000; // Reduce for better visibility of interactions
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
@@ -97,6 +98,99 @@ fn main() {
     app.run();
 }
 
+// Function to create a hilly terrain mesh
+fn create_hilly_terrain(size: f32, resolution: usize) -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+    
+    let step = size / resolution as f32;
+    let half_size = size * 0.5;
+    
+    // Generate height map using simple noise
+    let mut heights = vec![vec![0.0; resolution + 1]; resolution + 1];
+    for x in 0..=resolution {
+        for z in 0..=resolution {
+            let world_x = (x as f32 * step) - half_size;
+            let world_z = (z as f32 * step) - half_size;
+            
+            // Create hills using multiple sine waves for natural-looking terrain
+            let height =
+                (world_x * 0.1).sin() * (world_z * 0.1).cos() * 2.0 +
+                (world_x * 0.05).cos() * (world_z * 0.15).sin() * 1.5 +
+                (world_x * 0.2).sin() * (world_z * 0.08).cos() * 0.8 +
+                (world_x * 0.03).cos() * (world_z * 0.04).sin() * 3.0;
+            
+            heights[x][z] = height;
+        }
+    }
+    
+    // Generate vertices
+    for x in 0..=resolution {
+        for z in 0..=resolution {
+            let world_x = (x as f32 * step) - half_size;
+            let world_z = (z as f32 * step) - half_size;
+            let height = heights[x][z];
+            
+            positions.push([world_x, height, world_z]);
+            uvs.push([x as f32 / resolution as f32, z as f32 / resolution as f32]);
+            
+            // Calculate normal using neighboring heights
+            let normal = if x > 0 && x < resolution && z > 0 && z < resolution {
+                let left = heights[x - 1][z];
+                let right = heights[x + 1][z];
+                let up = heights[x][z - 1];
+                let down = heights[x][z + 1];
+                
+                let dx = right - left;
+                let dz = down - up;
+                
+                Vec3::new(-dx, 2.0 * step, -dz).normalize()
+            } else {
+                Vec3::Y // Default normal for edge vertices
+            };
+            
+            normals.push([normal.x, normal.y, normal.z]);
+        }
+    }
+    
+    // Generate indices for triangles
+    for x in 0..resolution {
+        for z in 0..resolution {
+            let i = x * (resolution + 1) + z;
+            let i_next_row = (x + 1) * (resolution + 1) + z;
+            
+            // First triangle
+            indices.push(i as u32);
+            indices.push((i + 1) as u32);
+            indices.push(i_next_row as u32);
+            
+            // Second triangle
+            indices.push((i + 1) as u32);
+            indices.push((i_next_row + 1) as u32);
+            indices.push(i_next_row as u32);
+        }
+    }
+    
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    
+    mesh
+}
+
+// Function to get terrain height at a given world position
+fn get_terrain_height(x: f32, z: f32) -> f32 {
+    // This should match the height calculation in create_hilly_terrain
+    (x * 0.1).sin() * (z * 0.1).cos() * 2.0 +
+    (x * 0.05).cos() * (z * 0.15).sin() * 1.5 +
+    (x * 0.2).sin() * (z * 0.08).cos() * 0.8 +
+    (x * 0.03).cos() * (z * 0.04).sin() * 3.0
+}
+
 fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -119,9 +213,9 @@ fn setup(
         Transform::from_xyz(5.0, 1.0, 0.0),
     ));
 
-    // Add lunar surface terrain - larger plane with lunar-like coloring
+    // Add lunar surface terrain - hilly terrain with lunar-like coloring
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(100.0, 100.0))),
+        Mesh3d(meshes.add(create_hilly_terrain(100.0, 100))),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.4, 0.4, 0.35), // Lunar regolith gray-brown
             perceptual_roughness: 0.9, // Very rough surface like moon dust
@@ -207,9 +301,13 @@ fn player_movement(
         // Apply velocity to position
         transform.translation += velocity.0 * time.delta_secs();
 
-        // Simple ground collision (y = 0.9 is half the capsule height)
-        if transform.translation.y <= 0.9 {
-            transform.translation.y = 0.9;
+        // Get terrain height at player position
+        let terrain_height = get_terrain_height(transform.translation.x, transform.translation.z);
+        let player_ground_level = terrain_height + 0.9; // 0.9 is half the capsule height
+
+        // Terrain-aware ground collision
+        if transform.translation.y <= player_ground_level {
+            transform.translation.y = player_ground_level;
             velocity.0.y = 0.0;
             grounded.0 = true;
         } else {
@@ -477,9 +575,12 @@ fn particle_physics(
         // Apply velocity to position
         transform.translation += velocity.0 * dt;
 
-        // Simple ground collision using individual particle radius
-        if transform.translation.y <= _particle.radius {
-            transform.translation.y = _particle.radius;
+        // Terrain-aware ground collision using individual particle radius
+        let terrain_height = get_terrain_height(transform.translation.x, transform.translation.z);
+        let particle_ground_level = terrain_height + _particle.radius;
+        
+        if transform.translation.y <= particle_ground_level {
+            transform.translation.y = particle_ground_level;
             velocity.0.y = velocity.0.y.abs() * -0.2; // Bounce with energy loss
             velocity.0.x *= 0.95; // Reduced friction - particles slide more on lunar surface
             velocity.0.z *= 0.95; // Reduced friction - particles slide more on lunar surface
@@ -503,8 +604,8 @@ fn particle_physics(
             }
         }
         
-        // Additional stability check: if particle is very close to ground and moving slowly
-        if transform.translation.y <= _particle.radius + 0.02 {
+        // Additional stability check: if particle is very close to terrain and moving slowly
+        if transform.translation.y <= particle_ground_level + 0.02 {
             // Apply extra damping for particles near ground
             velocity.0 *= GROUND_DAMPING;
             
@@ -535,11 +636,13 @@ fn gpu_particle_physics(
         let particle_count = particle_query.iter().count();
         
         // Prepare uniforms for GPU compute
+        // Note: GPU compute will need to be updated to handle terrain heights
+        let terrain_height = get_terrain_height(player_transform.translation.x, player_transform.translation.z);
         let _uniforms = ComputeUniforms {
             delta_time: time.delta_secs(),
             gravity: LUNAR_GRAVITY,
             particle_count: particle_count as u32,
-            ground_level: MIN_PARTICLE_RADIUS,
+            ground_level: terrain_height + MIN_PARTICLE_RADIUS,
             player_position: [
                 player_transform.translation.x,
                 player_transform.translation.y,
