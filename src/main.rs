@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap, HashSet};
 
 mod gpu_compute;
 use gpu_compute::{GpuComputePlugin, ComputeUniforms};
@@ -12,7 +12,7 @@ const PLAYER_SPEED: f32 =2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 5000; // Reduce for better visibility of interactions
+const PARTICLE_COUNT: usize = 10000; // Scale up to test spatial hashing performance
 const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
@@ -23,6 +23,15 @@ const COLLISION_DAMPING: f32 = 0.6; // Additional damping after collisions (very
 const MIN_VELOCITY_THRESHOLD: f32 = 0.08; // Velocities below this are set to zero (higher threshold)
 const GROUND_DAMPING: f32 = 0.85; // Additional damping for particles near ground
 const ANGULAR_DAMPING: f32 = 0.9; // For rotational motion if we add it later
+
+// Spatial hashing constants for collision optimization
+const SPATIAL_HASH_CELL_SIZE: f32 = 0.5; // Cell size should be roughly 2x max particle radius
+const SPATIAL_HASH_TABLE_SIZE: usize = 4096; // Power of 2 for efficient hashing
+
+// Particle sleeping constants for performance optimization
+const SLEEP_VELOCITY_THRESHOLD: f32 = 0.02; // Particles below this velocity can sleep
+const SLEEP_TIME_THRESHOLD: f32 = 1.0; // Time in seconds before particle sleeps
+const WAKE_DISTANCE_THRESHOLD: f32 = 0.3; // Distance to wake up sleeping particles
 
 // GPU compute toggle
 const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
@@ -40,6 +49,8 @@ struct Grounded(bool);
 struct RegolithParticle {
     radius: f32,
     mass: f32,
+    is_sleeping: bool,
+    sleep_timer: f32,
 }
 
 // FPS tracking resource
@@ -90,6 +101,7 @@ fn main() {
             player_movement,
             particle_physics,
             particle_collisions,
+            wake_sleeping_particles,
             player_particle_interactions,
             monitor_particle_stability,
         ));
@@ -377,6 +389,8 @@ fn spawn_regolith_particles(
             RegolithParticle {
                 radius,
                 mass,
+                is_sleeping: false,
+                sleep_timer: 0.0,
             },
             Velocity(Vec3::ZERO),
         ));
@@ -386,80 +400,161 @@ fn spawn_regolith_particles(
              PARTICLE_COUNT, MIN_PARTICLE_RADIUS, MAX_PARTICLE_RADIUS);
 }
 
-fn particle_collisions(
-    mut particle_query: Query<(&mut Transform, &mut Velocity, &RegolithParticle), Without<Player>>,
-) {
-    // Collect all particle data first
-    let mut particle_data: Vec<(Vec3, Vec3, f32)> = Vec::new();
+// Spatial hash function for 3D coordinates
+fn spatial_hash(pos: Vec3) -> usize {
+    let x = (pos.x / SPATIAL_HASH_CELL_SIZE).floor() as i32;
+    let y = (pos.y / SPATIAL_HASH_CELL_SIZE).floor() as i32;
+    let z = (pos.z / SPATIAL_HASH_CELL_SIZE).floor() as i32;
     
-    for (transform, velocity, particle) in particle_query.iter() {
-        particle_data.push((transform.translation, velocity.0, particle.radius));
-    }
+    // Simple hash function combining x, y, z coordinates
+    let hash = ((x.wrapping_mul(73856093)) ^ (y.wrapping_mul(19349663)) ^ (z.wrapping_mul(83492791))) as usize;
+    hash % SPATIAL_HASH_TABLE_SIZE
+}
+
+// Get neighboring cell coordinates for collision detection
+fn get_neighbor_cells(pos: Vec3) -> Vec<usize> {
+    let mut cells = Vec::with_capacity(27); // 3x3x3 = 27 neighboring cells
     
-    // Calculate collision responses
-    let mut velocity_updates: Vec<Vec3> = vec![Vec3::ZERO; particle_data.len()];
-    let mut position_updates: Vec<Vec3> = vec![Vec3::ZERO; particle_data.len()];
+    let base_x = (pos.x / SPATIAL_HASH_CELL_SIZE).floor() as i32;
+    let base_y = (pos.y / SPATIAL_HASH_CELL_SIZE).floor() as i32;
+    let base_z = (pos.z / SPATIAL_HASH_CELL_SIZE).floor() as i32;
     
-    // Simple O(n²) collision detection - we'll optimize this later with spatial hashing
-    for i in 0..particle_data.len() {
-        for j in (i + 1)..particle_data.len() {
-            let (pos_a, vel_a, radius_a) = particle_data[i];
-            let (pos_b, vel_b, radius_b) = particle_data[j];
-            
-            let distance = pos_a.distance(pos_b);
-            let min_distance = radius_a + radius_b;
-            
-            // Check for collision
-            if distance < min_distance && distance > 0.0 {
-                // Calculate collision normal
-                let normal = (pos_b - pos_a).normalize();
+    // Check all 27 neighboring cells (including the current cell)
+    for dx in -1..=1 {
+        for dy in -1..=1 {
+            for dz in -1..=1 {
+                let x = base_x + dx;
+                let y = base_y + dy;
+                let z = base_z + dz;
                 
-                // Separate particles to prevent overlap
-                let overlap = min_distance - distance;
-                let separation = normal * (overlap * 0.5);
-                
-                position_updates[i] -= separation;
-                position_updates[j] += separation;
-                
-                // Get masses from particle data (we need to access the actual particles)
-                // For now, we'll use a simplified approach based on radius
-                let mass_a = (radius_a / MIN_PARTICLE_RADIUS).powi(3) * 0.5;
-                let mass_b = (radius_b / MIN_PARTICLE_RADIUS).powi(3) * 0.5;
-                let total_mass = mass_a + mass_b;
-                
-                // Mass-based elastic collision response
-                let relative_velocity = vel_b - vel_a;
-                let velocity_along_normal = relative_velocity.dot(normal);
-                
-                // Don't resolve if velocities are separating
-                if velocity_along_normal > 0.0 {
-                    continue;
-                }
-                
-                // Restitution (bounciness) - lower for regolith
-                let restitution = 0.2;
-                let impulse_scalar = -(1.0 + restitution) * velocity_along_normal / total_mass;
-                let impulse = normal * impulse_scalar;
-                
-                // Apply impulse based on mass ratios (heavier particles move less)
-                velocity_updates[i] -= impulse * mass_b;
-                velocity_updates[j] += impulse * mass_a;
+                let hash = ((x.wrapping_mul(73856093)) ^ (y.wrapping_mul(19349663)) ^ (z.wrapping_mul(83492791))) as usize;
+                cells.push(hash % SPATIAL_HASH_TABLE_SIZE);
             }
         }
     }
     
-    // Apply updates to actual particles
-    for (i, (mut transform, mut velocity, _)) in particle_query.iter_mut().enumerate() {
+    cells
+}
+
+fn particle_collisions(
+    mut particle_query: Query<(&mut Transform, &mut Velocity, &mut RegolithParticle), Without<Player>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    
+    // Collect all particle data with indices, excluding sleeping particles
+    let mut particle_data: Vec<(usize, Vec3, Vec3, f32, f32, bool)> = Vec::new();
+    let mut sleeping_particles = 0;
+    
+    for (i, (transform, velocity, particle)) in particle_query.iter().enumerate() {
+        if particle.is_sleeping {
+            sleeping_particles += 1;
+            continue; // Skip sleeping particles for collision detection
+        }
+        particle_data.push((i, transform.translation, velocity.0, particle.radius, particle.mass, false));
+    }
+    
+    // Build spatial hash table
+    let mut spatial_hash_table: HashMap<usize, Vec<usize>> = HashMap::new();
+    
+    for (i, (_, pos, _, _, _, _)) in particle_data.iter().enumerate() {
+        let hash = spatial_hash(*pos);
+        spatial_hash_table.entry(hash).or_insert_with(Vec::new).push(i);
+    }
+    
+    // Calculate collision responses using spatial hashing
+    let mut velocity_updates: Vec<Vec3> = vec![Vec3::ZERO; particle_data.len()];
+    let mut position_updates: Vec<Vec3> = vec![Vec3::ZERO; particle_data.len()];
+    let mut collision_pairs: HashSet<(usize, usize)> = HashSet::new();
+    
+    // Check collisions only within neighboring cells
+    for (i, (_, pos_a, vel_a, radius_a, mass_a, _)) in particle_data.iter().enumerate() {
+        let neighbor_cells = get_neighbor_cells(*pos_a);
+        
+        for &cell_hash in &neighbor_cells {
+            if let Some(cell_particles) = spatial_hash_table.get(&cell_hash) {
+                for &j in cell_particles {
+                    if i >= j { continue; } // Avoid duplicate checks and self-collision
+                    
+                    // Skip if we've already processed this pair
+                    if collision_pairs.contains(&(i, j)) || collision_pairs.contains(&(j, i)) {
+                        continue;
+                    }
+                    
+                    let (_, pos_b, vel_b, radius_b, mass_b, _) = particle_data[j];
+                    
+                    let distance = pos_a.distance(pos_b);
+                    let min_distance = radius_a + radius_b;
+                    
+                    // Check for collision
+                    if distance < min_distance && distance > 0.0 {
+                        collision_pairs.insert((i, j));
+                        
+                        // Calculate collision normal
+                        let normal = (pos_b - *pos_a).normalize();
+                        
+                        // Separate particles to prevent overlap
+                        let overlap = min_distance - distance;
+                        let separation = normal * (overlap * 0.5);
+                        
+                        position_updates[i] -= separation;
+                        position_updates[j] += separation;
+                        
+                        let total_mass = mass_a + mass_b;
+                        
+                        // Mass-based elastic collision response
+                        let relative_velocity = vel_b - *vel_a;
+                        let velocity_along_normal = relative_velocity.dot(normal);
+                        
+                        // Don't resolve if velocities are separating
+                        if velocity_along_normal > 0.0 {
+                            continue;
+                        }
+                        
+                        // Restitution (bounciness) - lower for regolith
+                        let restitution = 0.2;
+                        let impulse_scalar = -(1.0 + restitution) * velocity_along_normal / total_mass;
+                        let impulse = normal * impulse_scalar;
+                        
+                        // Apply impulse based on mass ratios (heavier particles move less)
+                        velocity_updates[i] -= impulse * mass_b;
+                        velocity_updates[j] += impulse * mass_a;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Apply updates to actual particles and manage sleeping state
+    for (i, (mut transform, mut velocity, mut particle)) in particle_query.iter_mut().enumerate() {
+        // Skip sleeping particles
+        if particle.is_sleeping {
+            continue;
+        }
+        
         transform.translation += position_updates[i];
         velocity.0 += velocity_updates[i];
         
         // Apply collision damping if there was a collision
         if velocity_updates[i].length() > 0.001 {
             velocity.0 *= COLLISION_DAMPING;
+            particle.sleep_timer = 0.0; // Reset sleep timer on collision
         }
         
         // Apply general velocity damping to simulate energy loss
         velocity.0 *= VELOCITY_DAMPING;
+        
+        // Update sleep timer and check for sleeping
+        let speed = velocity.0.length();
+        if speed < SLEEP_VELOCITY_THRESHOLD {
+            particle.sleep_timer += dt;
+            if particle.sleep_timer > SLEEP_TIME_THRESHOLD {
+                particle.is_sleeping = true;
+                velocity.0 = Vec3::ZERO; // Stop all movement when sleeping
+            }
+        } else {
+            particle.sleep_timer = 0.0; // Reset timer if moving fast enough
+        }
         
         // Clamp very small velocities to zero to prevent micro-jittering
         // BUT preserve gravity effects by only zeroing horizontal components
@@ -473,11 +568,16 @@ fn particle_collisions(
             }
         }
     }
+    
+    // Print sleeping particle count occasionally for debugging
+    if sleeping_particles > 0 && time.elapsed_secs() % 5.0 < dt {
+        println!("Sleeping particles: {} / {}", sleeping_particles, particle_query.iter().count());
+    }
 }
 
 fn player_particle_interactions(
     mut player_query: Query<(&mut Transform, &mut Velocity), With<Player>>,
-    mut particle_query: Query<(&mut Transform, &mut Velocity, &RegolithParticle), Without<Player>>,
+    mut particle_query: Query<(&mut Transform, &mut Velocity, &mut RegolithParticle), Without<Player>>,
 ) {
     // Get player data
     if let Ok((mut player_transform, mut player_velocity)) = player_query.single_mut() {
@@ -485,7 +585,24 @@ fn player_particle_interactions(
         let mut collision_count = 0;
         
         // Check collisions with all particles
-        for (mut particle_transform, mut particle_velocity, particle) in particle_query.iter_mut() {
+        for (mut particle_transform, mut particle_velocity, mut particle) in particle_query.iter_mut() {
+            // Wake up sleeping particles when player interacts with them
+            if particle.is_sleeping {
+                let distance = player_transform.translation.distance(particle_transform.translation);
+                if distance < player_radius + particle.radius + 0.2 {
+                    particle.is_sleeping = false;
+                    particle.sleep_timer = 0.0;
+                    // Give a small velocity to prevent immediate re-sleeping
+                    use rand::Rng;
+                    let mut rng = rand::thread_rng();
+                    particle_velocity.0 = Vec3::new(
+                        (rng.gen::<f32>() - 0.5) * 0.2,
+                        0.1,
+                        (rng.gen::<f32>() - 0.5) * 0.2,
+                    );
+                }
+                continue; // Skip collision processing for sleeping particles
+            }
             let distance = player_transform.translation.distance(particle_transform.translation);
             let min_distance = player_radius + particle.radius;
             
@@ -562,13 +679,18 @@ fn player_particle_interactions(
 }
 
 fn particle_physics(
-    mut particle_query: Query<(&mut Transform, &mut Velocity, &RegolithParticle), Without<Player>>,
+    mut particle_query: Query<(&mut Transform, &mut Velocity, &mut RegolithParticle), Without<Player>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    // Apply gravity to all particles
-    for (mut transform, mut velocity, _particle) in &mut particle_query {
+    // Apply gravity and physics to active particles only
+    for (mut transform, mut velocity, mut particle) in &mut particle_query {
+        // Skip sleeping particles for physics calculations
+        if particle.is_sleeping {
+            continue;
+        }
+        
         // Apply lunar gravity
         velocity.0.y += LUNAR_GRAVITY * dt;
 
@@ -577,7 +699,7 @@ fn particle_physics(
 
         // Terrain-aware ground collision using individual particle radius
         let terrain_height = get_terrain_height(transform.translation.x, transform.translation.z);
-        let particle_ground_level = terrain_height + _particle.radius;
+        let particle_ground_level = terrain_height + particle.radius;
         
         if transform.translation.y <= particle_ground_level {
             transform.translation.y = particle_ground_level;
@@ -587,10 +709,26 @@ fn particle_physics(
             
             // Additional damping after ground collision to prevent bouncing jitter
             velocity.0 *= COLLISION_DAMPING;
+            
+            // Reset sleep timer on ground collision
+            particle.sleep_timer = 0.0;
         }
         
         // Apply general velocity damping
         velocity.0 *= VELOCITY_DAMPING;
+        
+        // Update sleep timer and check for sleeping
+        let speed = velocity.0.length();
+        if speed < SLEEP_VELOCITY_THRESHOLD {
+            particle.sleep_timer += dt;
+            if particle.sleep_timer > SLEEP_TIME_THRESHOLD {
+                particle.is_sleeping = true;
+                velocity.0 = Vec3::ZERO; // Stop all movement when sleeping
+                continue; // Skip further processing for newly sleeping particles
+            }
+        } else {
+            particle.sleep_timer = 0.0; // Reset timer if moving fast enough
+        }
         
         // Clamp very small velocities to zero to prevent micro-jittering
         // BUT preserve gravity effects by only zeroing horizontal components
@@ -618,6 +756,62 @@ fn particle_physics(
             if velocity.0.xz().length() < 0.05 {
                 velocity.0.x = 0.0;
                 velocity.0.z = 0.0;
+            }
+        }
+    }
+}
+
+// System to wake up sleeping particles when disturbed
+fn wake_sleeping_particles(
+    mut particle_query: Query<(&Transform, &mut RegolithParticle, &mut Velocity)>,
+    player_query: Query<&Transform, (With<Player>, Without<RegolithParticle>)>,
+) {
+    if let Ok(player_transform) = player_query.single() {
+        // Collect positions of all particles first to avoid borrow checker issues
+        let particle_positions: Vec<(usize, Vec3, bool)> = particle_query
+            .iter()
+            .enumerate()
+            .map(|(i, (transform, particle, _))| (i, transform.translation, particle.is_sleeping))
+            .collect();
+        
+        // Check for wake-up conditions
+        for (transform, mut particle, mut velocity) in particle_query.iter_mut() {
+            if !particle.is_sleeping {
+                continue;
+            }
+            
+            let mut should_wake = false;
+            
+            // Wake up if player is nearby
+            let distance_to_player = transform.translation.distance(player_transform.translation);
+            if distance_to_player < WAKE_DISTANCE_THRESHOLD * 3.0 {
+                should_wake = true;
+            }
+            
+            // Wake up if any active particle is nearby
+            for &(_, other_pos, other_sleeping) in &particle_positions {
+                if other_sleeping {
+                    continue;
+                }
+                
+                let distance = transform.translation.distance(other_pos);
+                if distance < WAKE_DISTANCE_THRESHOLD {
+                    should_wake = true;
+                    break;
+                }
+            }
+            
+            if should_wake {
+                particle.is_sleeping = false;
+                particle.sleep_timer = 0.0;
+                // Give a small random velocity to prevent immediate re-sleeping
+                use rand::Rng;
+                let mut rng = rand::thread_rng();
+                velocity.0 = Vec3::new(
+                    (rng.gen::<f32>() - 0.5) * 0.1,
+                    0.05,
+                    (rng.gen::<f32>() - 0.5) * 0.1,
+                );
             }
         }
     }

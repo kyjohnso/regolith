@@ -30,7 +30,30 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [x] Implement CPU-based sphere-sphere collision detection for validation
 - [x] Test: Run cargo run to verify collision detection works
 
-### Phase 4: GPU Compute Architecture
+### Phase 4: CPU Performance Optimization
+- [ ] Optimize CPU-based particle physics performance
+- [ ] Scale up to 10k particles with CPU optimization and profiling
+- [ ] Test: Run cargo run and profile performance at 10k particles
+- [ ] Implement advanced CPU-based spatial hashing for collision detection
+- [ ] Optimize CPU memory management and data structures
+- [ ] Scale up to 100k particles with CPU performance tuning
+- [ ] Test: Run cargo run and measure fps at 100k particles
+
+### Phase 5: Advanced Physics & Interactions (CPU-based)
+- [x] Implement particle interaction with terrain/surface (Updated for hilly terrain)
+- [x] Test: Run cargo run to verify terrain-particle interactions
+- [ ] Add basic particle clustering and cohesion effects (CPU implementation)
+- [ ] Implement advanced particle interaction mechanics
+- [ ] Test: Run cargo run to verify advanced physics interactions
+
+### Phase 6: Game Mechanics
+- [x] Add particle size variation and basic shape differentiation
+- [x] Implement player-regolith interaction mechanics
+- [x] Test: Run cargo run to verify player can interact with particles
+- [ ] Create foundation for compute farm remnants system
+- [ ] Add basic regolith manipulation tools for rebuilding
+
+### Phase 7: GPU Compute Architecture (Future Implementation)
 - [x] Design GPU compute shader architecture for particle physics
 - [x] Implement wgpu compute shader for particle position updates (Infrastructure only)
 - [ ] Complete GPU-CPU data synchronization for full GPU physics pipeline
@@ -38,42 +61,24 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [ ] Add GPU-based spatial hashing for efficient collision detection
 - [ ] Implement GPU sphere-sphere collision response system
 - [ ] Test: Run cargo run to verify GPU physics pipeline
-
-### Phase 5: Performance Scaling
-- [ ] Scale up to 10k particles and performance test
-- [ ] Test: Run cargo run and profile performance at 10k particles
-- [ ] Optimize GPU memory management and buffer strategies
-- [ ] Scale up to 100k particles with performance profiling
-- [ ] Test: Run cargo run and measure fps at 100k particles
-
-### Phase 6: Advanced Physics & Interactions
-- [x] Implement particle interaction with terrain/surface (Updated for hilly terrain)
-- [x] Test: Run cargo run to verify terrain-particle interactions
-- [ ] Add basic particle clustering and cohesion effects
-- [ ] Scale up to 1M+ particles with target 30fps performance
-- [ ] Test: Run cargo run and validate 1M+ particle performance
-
-### Phase 7: Game Mechanics
-- [x] Add particle size variation and basic shape differentiation
-- [x] Implement player-regolith interaction mechanics
-- [x] Test: Run cargo run to verify player can interact with particles
-- [ ] Create foundation for compute farm remnants system
-- [ ] Add basic regolith manipulation tools for rebuilding
+- [ ] Scale up to 1M+ particles with GPU implementation at target 30fps performance
+- [ ] Test: Run cargo run and validate 1M+ particle performance with GPU
 
 ## Technical Architecture
 
 ### Core Systems
 - **ECS Architecture**: Leveraging Bevy's Entity Component System
 - **Rendering**: Instanced mesh rendering for particles
-- **Physics**: GPU compute shaders with wgpu
-- **Collision Detection**: Spatial hashing on GPU
+- **Physics**: CPU-based physics (optimized), with future GPU compute shader migration
+- **Collision Detection**: Optimized CPU spatial hashing, future GPU implementation
 - **Camera**: Pan-orbit camera for exploration
 
 ### Performance Targets
-- **Particle Count**: 1M+ particles
+- **Current Focus**: Optimize CPU performance for 100k+ particles
+- **Future Goal**: 1M+ particles with GPU compute
 - **Frame Rate**: 30fps minimum
 - **Platform**: Desktop (Windows/Linux/macOS)
-- **GPU**: wgpu compute shaders for physics
+- **Migration Path**: CPU optimization → GPU compute shaders
 
 ### Key Dependencies
 - `bevy = "0.16.1"`
@@ -84,7 +89,8 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - Start simple with sphere-sphere collisions and basic gravity
 - Add complexity iteratively
 - Regular testing with `cargo run` after each major addition
-- Focus on GPU-based physics for scalability
+- **Current Focus**: Optimize CPU-based physics before GPU migration
+- GPU implementation available on separate branch for future integration
 
 ## Recent Updates
 ### Hilly Terrain Implementation (Completed)
