@@ -28,10 +28,10 @@ const ANGULAR_DAMPING: f32 = 0.9; // For rotational motion if we add it later
 const SPATIAL_HASH_CELL_SIZE: f32 = 0.5; // Cell size should be roughly 2x max particle radius
 const SPATIAL_HASH_TABLE_SIZE: usize = 4096; // Power of 2 for efficient hashing
 
-// Particle sleeping constants for performance optimization - Balanced
-const SLEEP_VELOCITY_THRESHOLD: f32 = 0.05; // Particles below this velocity can sleep (reasonable threshold)
-const SLEEP_TIME_THRESHOLD: f32 = 0.5; // Time in seconds before particle sleeps (reasonable time)
-const WAKE_DISTANCE_THRESHOLD: f32 = 0.2; // Distance to wake up sleeping particles (reasonable wake radius)
+// Particle sleeping constants for performance optimization - More effective
+const SLEEP_VELOCITY_THRESHOLD: f32 = 0.03; // Particles below this velocity can sleep (lower threshold)
+const SLEEP_TIME_THRESHOLD: f32 = 0.3; // Time in seconds before particle sleeps (faster sleeping)
+const WAKE_DISTANCE_THRESHOLD: f32 = 0.15; // Distance to wake up sleeping particles (smaller wake radius)
 
 // GPU compute toggle
 const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
@@ -511,8 +511,8 @@ fn particle_collisions(
                             continue;
                         }
                         
-                        // Restitution (bounciness) - even lower for regolith to reduce jitter
-                        let restitution = 0.1;
+                        // Restitution (bounciness) - very low for regolith to reduce jitter
+                        let restitution = 0.05;
                         let impulse_scalar = -(1.0 + restitution) * velocity_along_normal / total_mass;
                         let impulse = normal * impulse_scalar;
                         
@@ -550,14 +550,23 @@ fn particle_collisions(
         // Apply general velocity damping to simulate energy loss
         velocity.0 *= VELOCITY_DAMPING;
         
-        // Balanced velocity clamping before sleep check
+        // More aggressive velocity clamping to reduce jitter
         let speed = velocity.0.length();
-        if speed < MIN_VELOCITY_THRESHOLD * 0.5 {
-            // Clamp very small velocities more gently
-            velocity.0.x *= 0.3;
-            velocity.0.z *= 0.3;
-            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.3 {
-                velocity.0.y *= 0.3;
+        if speed < MIN_VELOCITY_THRESHOLD * 0.7 {
+            // Clamp small velocities more aggressively
+            velocity.0.x *= 0.2;
+            velocity.0.z *= 0.2;
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.4 {
+                velocity.0.y *= 0.2;
+            }
+        }
+        
+        // Additional micro-jitter elimination
+        if speed < MIN_VELOCITY_THRESHOLD * 0.4 {
+            velocity.0.x *= 0.1;
+            velocity.0.z *= 0.1;
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.2 {
+                velocity.0.y *= 0.1;
             }
         }
         
@@ -573,16 +582,16 @@ fn particle_collisions(
             particle.sleep_timer = 0.0; // Reset timer if moving fast enough
         }
         
-        // Balanced velocity clamping to reduce micro-jittering
+        // More aggressive final velocity clamping to reduce micro-jittering
         let final_speed = velocity.0.length();
-        if final_speed < MIN_VELOCITY_THRESHOLD * 0.3 {
-            velocity.0 = Vec3::ZERO; // Complete stop for very tiny movements
+        if final_speed < MIN_VELOCITY_THRESHOLD * 0.5 {
+            velocity.0 = Vec3::ZERO; // Complete stop for small movements
         } else if final_speed < MIN_VELOCITY_THRESHOLD {
             // Zero out horizontal movement, preserve vertical for gravity
             velocity.0.x = 0.0;
             velocity.0.z = 0.0;
-            // Keep y-component for gravity unless it's very small
-            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.4 {
+            // Keep y-component for gravity unless it's small
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.3 {
                 velocity.0.y = 0.0;
             }
         }
