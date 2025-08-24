@@ -16,6 +16,7 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [x] Create basic Bevy app with 3D scene and orbit camera controls
 - [x] Test: Run cargo run to verify basic app launches and camera works
 - [x] Add lunar surface terrain (simple plane or heightmap)
+- [x] **UPDATED**: Implemented hilly terrain with procedural generation using sine waves
 - [x] Test: Run cargo run to verify terrain renders correctly
 
 ### Phase 2: Player Movement & Interaction
@@ -46,8 +47,8 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - [ ] Test: Run cargo run and measure fps at 100k particles
 
 ### Phase 6: Advanced Physics & Interactions
-- [ ] Implement particle interaction with terrain/surface
-- [ ] Test: Run cargo run to verify terrain-particle interactions
+- [x] Implement particle interaction with terrain/surface (Updated for hilly terrain)
+- [x] Test: Run cargo run to verify terrain-particle interactions
 - [ ] Add basic particle clustering and cohesion effects
 - [ ] Scale up to 1M+ particles with target 30fps performance
 - [ ] Test: Run cargo run and validate 1M+ particle performance
@@ -84,3 +85,11 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - Add complexity iteratively
 - Regular testing with `cargo run` after each major addition
 - Focus on GPU-based physics for scalability
+
+## Recent Updates
+### Hilly Terrain Implementation (Completed)
+- **Replaced flat plane with procedural hilly terrain** using multiple sine wave functions
+- **Added terrain height calculation function** for consistent collision detection
+- **Updated collision systems** for both player and particles to work with variable terrain heights
+- **Maintains performance** with 5000 particles settling naturally on hills and valleys
+- **Enhanced visual realism** with proper normal calculation for lighting on terrain
