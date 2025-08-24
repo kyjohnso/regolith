@@ -17,21 +17,21 @@ const MIN_PARTICLE_RADIUS: f32 = 0.05; // Smallest particles (fine dust)
 const MAX_PARTICLE_RADIUS: f32 = 0.15; // Largest particles (small rocks)
 const SPAWN_AREA_SIZE: f32 = 4.0; // Spawn even closer to player for testing
 
-// Damping constants
-const VELOCITY_DAMPING: f32 = 0.95; // General velocity damping (very aggressive to reduce jittering)
-const COLLISION_DAMPING: f32 = 0.6; // Additional damping after collisions (very aggressive)
-const MIN_VELOCITY_THRESHOLD: f32 = 0.08; // Velocities below this are set to zero (higher threshold)
-const GROUND_DAMPING: f32 = 0.85; // Additional damping for particles near ground
+// Damping constants - Balanced to reduce jitter while allowing natural motion
+const VELOCITY_DAMPING: f32 = 0.92; // General velocity damping (balanced)
+const COLLISION_DAMPING: f32 = 0.5; // Additional damping after collisions (balanced)
+const MIN_VELOCITY_THRESHOLD: f32 = 0.1; // Velocities below this are set to zero (balanced threshold)
+const GROUND_DAMPING: f32 = 0.8; // Additional damping for particles near ground
 const ANGULAR_DAMPING: f32 = 0.9; // For rotational motion if we add it later
 
 // Spatial hashing constants for collision optimization
 const SPATIAL_HASH_CELL_SIZE: f32 = 0.5; // Cell size should be roughly 2x max particle radius
 const SPATIAL_HASH_TABLE_SIZE: usize = 4096; // Power of 2 for efficient hashing
 
-// Particle sleeping constants for performance optimization
-const SLEEP_VELOCITY_THRESHOLD: f32 = 0.02; // Particles below this velocity can sleep
-const SLEEP_TIME_THRESHOLD: f32 = 1.0; // Time in seconds before particle sleeps
-const WAKE_DISTANCE_THRESHOLD: f32 = 0.3; // Distance to wake up sleeping particles
+// Particle sleeping constants for performance optimization - Balanced
+const SLEEP_VELOCITY_THRESHOLD: f32 = 0.05; // Particles below this velocity can sleep (reasonable threshold)
+const SLEEP_TIME_THRESHOLD: f32 = 0.5; // Time in seconds before particle sleeps (reasonable time)
+const WAKE_DISTANCE_THRESHOLD: f32 = 0.2; // Distance to wake up sleeping particles (reasonable wake radius)
 
 // GPU compute toggle
 const USE_GPU_COMPUTE: bool = false; // Switch back to CPU physics - GPU integration needs more work
@@ -493,9 +493,9 @@ fn particle_collisions(
                         // Calculate collision normal
                         let normal = (pos_b - *pos_a).normalize();
                         
-                        // Separate particles to prevent overlap
+                        // More aggressive separation to prevent overlap jitter
                         let overlap = min_distance - distance;
-                        let separation = normal * (overlap * 0.5);
+                        let separation = normal * (overlap * 0.6); // Increased separation factor
                         
                         position_updates[i] -= separation;
                         position_updates[j] += separation;
@@ -511,8 +511,8 @@ fn particle_collisions(
                             continue;
                         }
                         
-                        // Restitution (bounciness) - lower for regolith
-                        let restitution = 0.2;
+                        // Restitution (bounciness) - even lower for regolith to reduce jitter
+                        let restitution = 0.1;
                         let impulse_scalar = -(1.0 + restitution) * velocity_along_normal / total_mass;
                         let impulse = normal * impulse_scalar;
                         
@@ -526,27 +526,44 @@ fn particle_collisions(
     }
     
     // Apply updates to actual particles and manage sleeping state
-    for (i, (mut transform, mut velocity, mut particle)) in particle_query.iter_mut().enumerate() {
+    let mut active_particle_index = 0;
+    for (mut transform, mut velocity, mut particle) in particle_query.iter_mut() {
         // Skip sleeping particles
         if particle.is_sleeping {
             continue;
         }
         
-        transform.translation += position_updates[i];
-        velocity.0 += velocity_updates[i];
-        
-        // Apply collision damping if there was a collision
-        if velocity_updates[i].length() > 0.001 {
-            velocity.0 *= COLLISION_DAMPING;
-            particle.sleep_timer = 0.0; // Reset sleep timer on collision
+        // Only apply updates if we have data for this active particle
+        if active_particle_index < position_updates.len() {
+            transform.translation += position_updates[active_particle_index];
+            velocity.0 += velocity_updates[active_particle_index];
+            
+            // Apply collision damping if there was a collision
+            if velocity_updates[active_particle_index].length() > 0.001 {
+                velocity.0 *= COLLISION_DAMPING;
+                particle.sleep_timer = 0.0; // Reset sleep timer on collision
+            }
         }
+        
+        active_particle_index += 1;
         
         // Apply general velocity damping to simulate energy loss
         velocity.0 *= VELOCITY_DAMPING;
         
-        // Update sleep timer and check for sleeping
+        // Balanced velocity clamping before sleep check
         let speed = velocity.0.length();
-        if speed < SLEEP_VELOCITY_THRESHOLD {
+        if speed < MIN_VELOCITY_THRESHOLD * 0.5 {
+            // Clamp very small velocities more gently
+            velocity.0.x *= 0.3;
+            velocity.0.z *= 0.3;
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.3 {
+                velocity.0.y *= 0.3;
+            }
+        }
+        
+        // Update sleep timer and check for sleeping
+        let final_speed = velocity.0.length();
+        if final_speed < SLEEP_VELOCITY_THRESHOLD {
             particle.sleep_timer += dt;
             if particle.sleep_timer > SLEEP_TIME_THRESHOLD {
                 particle.is_sleeping = true;
@@ -556,14 +573,16 @@ fn particle_collisions(
             particle.sleep_timer = 0.0; // Reset timer if moving fast enough
         }
         
-        // Clamp very small velocities to zero to prevent micro-jittering
-        // BUT preserve gravity effects by only zeroing horizontal components
-        if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
-            // Only zero out horizontal movement, preserve vertical (gravity) component
+        // Balanced velocity clamping to reduce micro-jittering
+        let final_speed = velocity.0.length();
+        if final_speed < MIN_VELOCITY_THRESHOLD * 0.3 {
+            velocity.0 = Vec3::ZERO; // Complete stop for very tiny movements
+        } else if final_speed < MIN_VELOCITY_THRESHOLD {
+            // Zero out horizontal movement, preserve vertical for gravity
             velocity.0.x = 0.0;
             velocity.0.z = 0.0;
-            // Keep y-component for gravity unless it's also very small
-            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.5 {
+            // Keep y-component for gravity unless it's very small
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.4 {
                 velocity.0.y = 0.0;
             }
         }
@@ -717,9 +736,20 @@ fn particle_physics(
         // Apply general velocity damping
         velocity.0 *= VELOCITY_DAMPING;
         
-        // Update sleep timer and check for sleeping
+        // Balanced velocity clamping for physics system
         let speed = velocity.0.length();
-        if speed < SLEEP_VELOCITY_THRESHOLD {
+        if speed < MIN_VELOCITY_THRESHOLD * 0.5 {
+            // Clamp very small velocities more gently
+            velocity.0.x *= 0.3;
+            velocity.0.z *= 0.3;
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.3 {
+                velocity.0.y *= 0.3;
+            }
+        }
+        
+        // Update sleep timer and check for sleeping
+        let final_speed = velocity.0.length();
+        if final_speed < SLEEP_VELOCITY_THRESHOLD {
             particle.sleep_timer += dt;
             if particle.sleep_timer > SLEEP_TIME_THRESHOLD {
                 particle.is_sleeping = true;
@@ -730,14 +760,16 @@ fn particle_physics(
             particle.sleep_timer = 0.0; // Reset timer if moving fast enough
         }
         
-        // Clamp very small velocities to zero to prevent micro-jittering
-        // BUT preserve gravity effects by only zeroing horizontal components
-        if velocity.0.length() < MIN_VELOCITY_THRESHOLD {
-            // Only zero out horizontal movement, preserve vertical (gravity) component
+        // Balanced velocity clamping to reduce micro-jittering
+        let final_speed = velocity.0.length();
+        if final_speed < MIN_VELOCITY_THRESHOLD * 0.3 {
+            velocity.0 = Vec3::ZERO; // Complete stop for very tiny movements
+        } else if final_speed < MIN_VELOCITY_THRESHOLD {
+            // Zero out horizontal movement, preserve vertical for gravity
             velocity.0.x = 0.0;
             velocity.0.z = 0.0;
-            // Keep y-component for gravity unless it's also very small
-            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.5 {
+            // Keep y-component for gravity unless it's very small
+            if velocity.0.y.abs() < MIN_VELOCITY_THRESHOLD * 0.4 {
                 velocity.0.y = 0.0;
             }
         }
@@ -858,7 +890,7 @@ fn gpu_particle_physics(
 
 // System to monitor particle stability and detect excessive jittering
 fn monitor_particle_stability(
-    particle_query: Query<&Velocity, With<RegolithParticle>>,
+    particle_query: Query<(&Velocity, &RegolithParticle), With<RegolithParticle>>,
     time: Res<Time>,
 ) {
     // Only run this check every 2 seconds to avoid performance impact
@@ -866,20 +898,27 @@ fn monitor_particle_stability(
         let mut high_frequency_particles = 0;
         let mut micro_motion_particles = 0;
         let mut stationary_particles = 0;
+        let mut sleeping_particles = 0;
         let mut total_kinetic_energy = 0.0;
         let particle_count = particle_query.iter().count();
         
-        for velocity in particle_query.iter() {
+        for (velocity, particle) in particle_query.iter() {
             let speed = velocity.0.length();
             total_kinetic_energy += speed * speed;
             
-            // Count particles with different motion types
-            if speed < MIN_VELOCITY_THRESHOLD {
-                stationary_particles += 1;
-            } else if speed > 0.05 && speed < 0.3 {
-                micro_motion_particles += 1;
-            } else if speed > 0.3 {
-                high_frequency_particles += 1;
+            // Count sleeping particles separately
+            if particle.is_sleeping {
+                sleeping_particles += 1;
+                stationary_particles += 1; // Sleeping particles are stationary
+            } else {
+                // Count particles with different motion types - realistic thresholds
+                if speed < 0.02 { // Truly stationary (but not sleeping)
+                    stationary_particles += 1;
+                } else if speed >= 0.02 && speed < 0.08 { // Visible micro-motion/jitter
+                    micro_motion_particles += 1;
+                } else if speed >= 0.08 {
+                    high_frequency_particles += 1;
+                }
             }
         }
         
@@ -891,15 +930,16 @@ fn monitor_particle_stability(
         
         let jitter_percentage = (micro_motion_particles as f32 / particle_count as f32) * 100.0;
         let stationary_percentage = (stationary_particles as f32 / particle_count as f32) * 100.0;
+        let sleeping_percentage = (sleeping_particles as f32 / particle_count as f32) * 100.0;
         
-        // Log stability metrics
-        println!("Particle stability: {:.1}% stationary, {:.1}% micro-motion, {} active, avg KE: {:.4}",
-                 stationary_percentage, jitter_percentage, high_frequency_particles, avg_kinetic_energy);
+        // Log stability metrics with sleeping info
+        println!("Particle stability: {:.1}% stationary ({:.1}% sleeping), {:.1}% micro-motion, {} active, avg KE: {:.4}",
+                 stationary_percentage, sleeping_percentage, jitter_percentage, high_frequency_particles, avg_kinetic_energy);
         
         // Only warn if jittering is excessive
-        if jitter_percentage > 50.0 {
+        if jitter_percentage > 5.0 {
             println!("WARNING: High jittering detected - {:.1}% of particles have micro-motion", jitter_percentage);
-        } else if jitter_percentage < 10.0 {
+        } else if jitter_percentage < 2.0 {
             println!("SUCCESS: Low jittering - only {:.1}% of particles have micro-motion", jitter_percentage);
         }
     }
