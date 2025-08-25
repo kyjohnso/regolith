@@ -69,9 +69,10 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 ### Core Systems
 - **ECS Architecture**: Leveraging Bevy's Entity Component System
 - **Rendering**: Instanced mesh rendering for particles
-- **Physics**: CPU-based physics (optimized), with future GPU compute shader migration
-- **Collision Detection**: Optimized CPU spatial hashing, future GPU implementation
+- **Physics**: Rapier 3D physics engine with realistic rigid body dynamics
+- **Collision Detection**: Rapier's optimized collision detection with trimesh terrain support
 - **Camera**: Pan-orbit camera for exploration
+- **Terrain Generation**: Seeded procedural generation with command line seed control
 
 ### Performance Targets
 - **Current Focus**: Optimize CPU performance for 100k+ particles
@@ -83,7 +84,9 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 ### Key Dependencies
 - `bevy = "0.16.1"`
 - `bevy_panorbit_camera = "0.28.0"`
+- `bevy_rapier3d = "0.31.0"` (Physics engine)
 - `rand = "0.8"`
+- `clap = "4.0"` (Command line argument parsing)
 
 ## Notes
 - Start simple with sphere-sphere collisions and basic gravity
@@ -93,7 +96,33 @@ Building a game/simulation engine using Rust and Bevy 0.16.1 that allows players
 - GPU implementation available on separate branch for future integration
 
 ## Recent Updates
-### Hilly Terrain Implementation (Completed)
+
+### Rapier Physics Integration (Completed)
+- **Integrated Rapier 3D physics engine** for realistic physics simulation
+- **Replaced custom physics with Rapier rigid bodies** for player and particles
+- **Added proper collision detection** using Rapier's collision system with trimesh for terrain
+- **Implemented realistic physics properties**:
+  - Player: Dynamic rigid body with capsule collider, locked rotation, damping
+  - Particles: Dynamic rigid bodies with sphere colliders, mass-based physics
+  - Terrain: Fixed rigid body with trimesh collider from mesh geometry
+- **Enhanced physics realism** with proper friction, restitution, and damping coefficients
+- **Improved performance** through Rapier's optimized collision detection and physics solving
+- **Added physics debugging** with RapierDebugRenderPlugin for development
+
+### Randomized Terrain Generation (Completed)
+- **Implemented seeded random terrain generation** replacing fixed sine wave coefficients
+- **Added command line seed parameter** (`--seed <number>` or `-s <number>`)
+- **Multi-layer procedural terrain** with 4-8 randomized terrain layers per generation
+- **Randomized terrain parameters**:
+  - Variable frequencies (0.01-0.3 range)
+  - Random amplitudes (0.5-4.0 range)
+  - Random phase offsets (0-2π range)
+  - Four different wave types (sin*cos, cos*sin, sin*sin, cos*cos)
+- **Added high-frequency detail noise** for surface texture variation
+- **Reproducible terrain** using seeded RNG for consistent results with same seed
+- **Enhanced user experience** with informative console output showing current seed
+
+### Previous: Hilly Terrain Implementation (Completed)
 - **Replaced flat plane with procedural hilly terrain** using multiple sine wave functions
 - **Added terrain height calculation function** for consistent collision detection
 - **Updated collision systems** for both player and particles to work with variable terrain heights
