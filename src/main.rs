@@ -12,7 +12,7 @@ const JUMP_IMPULSE: f32 = 140.0; // Scaled for 70kg mass (2.0 * 70)
 const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 10000;
+const PARTICLE_COUNT: usize = 15000;
 const MIN_PARTICLE_RADIUS: f32 = 0.05;
 const MAX_PARTICLE_RADIUS: f32 = 0.35;
 const SPAWN_AREA_SIZE: f32 = 24.0;
@@ -33,6 +33,20 @@ struct TerrainSeed(u64);
 
 #[derive(Component)]
 struct Player;
+
+#[derive(Component)]
+struct Truck;
+
+#[derive(Component)]
+struct TruckWheel {
+    is_front: bool,
+    is_left: bool,
+}
+
+#[derive(Component)]
+struct WheelRotation {
+    angular_velocity: f32,
+}
 
 #[derive(Component)]
 struct RegolithParticle {
@@ -76,6 +90,7 @@ fn main() {
         .add_systems(Update, (
             player_input,
             player_movement,
+            wheel_rotation_system,
             fps_tracker_system,
             fps_display_system,
         ))
@@ -218,22 +233,45 @@ fn setup(
     
     println!("Generated terrain with seed: {} (use --seed <number> to change)", seed);
     
-    // Add player with Rapier rigid body and complex collider (capsule)
-    commands.spawn((
-        Mesh3d(meshes.add(Capsule3d::new(0.5, 1.8))),
-        MeshMaterial3d(materials.add(Color::srgb(0.2, 0.7, 0.9))),
+    // Add truck with Rapier rigid body and cuboid collider
+    let truck_entity = commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(3.0, 1.0, 1.5))), // Truck body: length x height x width
+        MeshMaterial3d(materials.add(Color::srgb(0.8, 0.2, 0.2))), // Red truck
         Transform::from_xyz(0.0, 5.0, 0.0),
         Player,
+        Truck,
         RigidBody::Dynamic,
-        Collider::capsule_y(0.9, 0.5), // Complex collider for player
-        Restitution::coefficient(0.3),
-        Friction::coefficient(0.7),
-        Damping { linear_damping: 0.1, angular_damping: 1.0 },
-        LockedAxes::ROTATION_LOCKED, // Prevent player from rotating
-        AdditionalMassProperties::Mass(PLAYER_MASS), // Set player mass
+        Collider::cuboid(1.5, 0.5, 0.75), // Half extents for truck body
+        Restitution::coefficient(0.2),
+        Friction::coefficient(0.8),
+        Damping { linear_damping: 0.2, angular_damping: 1.0 },
+        // Allow full rotation so truck can tilt on terrain
+        AdditionalMassProperties::Mass(PLAYER_MASS * 2.0), // Heavier truck
         ExternalForce::default(),
         ExternalImpulse::default(),
-    ));
+    )).id();
+
+    // Add wheels as visual children of the truck (not separate physics bodies)
+    let wheel_configs = [
+        (Vec3::new(1.2, -0.7, 0.9), true, false),   // Front right
+        (Vec3::new(1.2, -0.7, -0.9), true, true),   // Front left
+        (Vec3::new(-1.2, -0.7, 0.9), false, false), // Rear right
+        (Vec3::new(-1.2, -0.7, -0.9), false, true), // Rear left
+    ];
+
+    for (wheel_pos, is_front, is_left) in wheel_configs {
+        let wheel_entity = commands.spawn((
+            Mesh3d(meshes.add(Cylinder::new(0.4, 0.2))), // Wheel: radius, height
+            MeshMaterial3d(materials.add(Color::srgb(0.1, 0.1, 0.1))), // Black wheels
+            Transform::from_translation(wheel_pos)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)), // Rotate to be wheel-like
+            TruckWheel { is_front, is_left },
+            WheelRotation { angular_velocity: 0.0 },
+        )).id();
+        
+        // Make wheels children of the truck so they move together
+        commands.entity(truck_entity).add_child(wheel_entity);
+    }
 
     // Add a basic cube to verify the scene is working
     commands.spawn((
@@ -282,37 +320,55 @@ fn setup(
 
 fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut player_query: Query<(&mut ExternalForce, &mut ExternalImpulse), With<Player>>,
+    mut truck_query: Query<(&mut ExternalForce, &mut ExternalImpulse, &Transform), (With<Player>, With<Truck>)>,
+    mut wheel_query: Query<&mut WheelRotation, With<TruckWheel>>,
     _time: Res<Time>,
 ) {
-    for (mut external_force, mut external_impulse) in &mut player_query {
+    let mut drive_input = 0.0;
+    let mut steer_input = 0.0;
+
+    // Get input
+    if keyboard_input.pressed(KeyCode::KeyW) {
+        drive_input = 1.0;
+    }
+    if keyboard_input.pressed(KeyCode::KeyS) {
+        drive_input = -1.0;
+    }
+    if keyboard_input.pressed(KeyCode::KeyA) {
+        steer_input = -1.0;
+    }
+    if keyboard_input.pressed(KeyCode::KeyD) {
+        steer_input = 1.0;
+    }
+
+    // Update wheel rotation for visual effect
+    for mut wheel_rotation in &mut wheel_query {
+        wheel_rotation.angular_velocity = drive_input * 8.0;
+    }
+
+    // Apply forces to truck body for movement
+    for (mut external_force, mut external_impulse, transform) in &mut truck_query {
         let mut movement = Vec3::ZERO;
 
-        // Horizontal movement (WASD)
-        if keyboard_input.pressed(KeyCode::KeyW) {
-            movement.z -= 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::KeyS) {
-            movement.z += 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::KeyA) {
-            movement.x -= 1.0;
-        }
-        if keyboard_input.pressed(KeyCode::KeyD) {
-            movement.x += 1.0;
+        // Forward/backward movement
+        if drive_input != 0.0 {
+            let forward_dir = transform.forward();
+            movement += forward_dir * drive_input * PLAYER_SPEED * PLAYER_MASS * 50.0;
         }
 
-        // Normalize and apply force
-        if movement.length() > 0.0 {
-            movement = movement.normalize() * PLAYER_SPEED * PLAYER_MASS * 40.0; // Scale by mass for consistent acceleration
-            external_force.force = movement;
+        // Turning - apply torque around Y axis
+        if steer_input != 0.0 {
+            let turn_torque = Vec3::new(0.0, steer_input * PLAYER_MASS * 25.0, 0.0);
+            external_force.torque = turn_torque;
         } else {
-            external_force.force = Vec3::ZERO;
+            external_force.torque = Vec3::ZERO;
         }
+
+        external_force.force = movement;
 
         // Jump (Space key)
         if keyboard_input.just_pressed(KeyCode::Space) {
-            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 10.0, 0.0); // Already scaled for mass
+            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 20.0, 0.0);
         }
     }
 }
@@ -325,6 +381,18 @@ fn player_movement(
     for _transform in &mut player_query {
         // Player movement is now handled by Rapier physics
         // Any additional player logic can go here
+    }
+}
+
+fn wheel_rotation_system(
+    mut wheel_query: Query<(&mut Transform, &WheelRotation), With<TruckWheel>>,
+    time: Res<Time>,
+) {
+    for (mut transform, wheel_rotation) in &mut wheel_query {
+        // Rotate the wheel mesh based on angular velocity
+        // Since wheels are cylinders rotated 90 degrees, we rotate around local Y axis for rolling motion
+        let rotation_delta = wheel_rotation.angular_velocity * time.delta_secs();
+        transform.rotate_local_y(rotation_delta);
     }
 }
 
