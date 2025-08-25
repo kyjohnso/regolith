@@ -11,7 +11,7 @@ const PLAYER_SPEED: f32 = 2.0;
 const JUMP_IMPULSE: f32 = 2.0;
 
 // Particle system constants
-const PARTICLE_COUNT: usize = 5000;
+const PARTICLE_COUNT: usize = 10000;
 const MIN_PARTICLE_RADIUS: f32 = 0.05;
 const MAX_PARTICLE_RADIUS: f32 = 0.15;
 const SPAWN_AREA_SIZE: f32 = 4.0;
