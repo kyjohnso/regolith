@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
 use bevy_rapier3d::prelude::*;
+use clap::Parser;
 use std::collections::VecDeque;
 
 // Lunar gravity constant (1/6th of Earth's gravity)
@@ -14,6 +15,20 @@ const PARTICLE_COUNT: usize = 5000;
 const MIN_PARTICLE_RADIUS: f32 = 0.05;
 const MAX_PARTICLE_RADIUS: f32 = 0.15;
 const SPAWN_AREA_SIZE: f32 = 4.0;
+
+// Command line arguments
+#[derive(Parser, Debug)]
+#[command(name = "regolith")]
+#[command(about = "A lunar regolith simulation with randomized terrain")]
+struct Args {
+    /// Seed for terrain generation (default: 42)
+    #[arg(short, long, default_value_t = 42)]
+    seed: u64,
+}
+
+// Resource to store the terrain seed
+#[derive(Resource)]
+struct TerrainSeed(u64);
 
 #[derive(Component)]
 struct Player;
@@ -47,12 +62,15 @@ impl Default for FpsTracker {
 struct FpsText;
 
 fn main() {
+    let args = Args::parse();
+    
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(PanOrbitCameraPlugin)
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
         .init_resource::<FpsTracker>()
+        .insert_resource(TerrainSeed(args.seed))
         .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui))
         .add_systems(Update, (
             player_input,
@@ -190,12 +208,14 @@ fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    terrain_seed: Res<TerrainSeed>,
 ) {
-    // Create terrain mesh for collision with a random seed
-    // You can change this seed value to generate different terrain layouts
-    let terrain_seed = 42; // Try different values like 123, 456, 789, etc.
-    let terrain_mesh = create_hilly_terrain(100.0, 100, terrain_seed);
+    // Create terrain mesh for collision using the command line seed
+    let seed = terrain_seed.0;
+    let terrain_mesh = create_hilly_terrain(100.0, 100, seed);
     let terrain_mesh_handle = meshes.add(terrain_mesh.clone());
+    
+    println!("Generated terrain with seed: {} (use --seed <number> to change)", seed);
     
     // Add player with Rapier rigid body and complex collider (capsule)
     commands.spawn((
