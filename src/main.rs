@@ -8,7 +8,8 @@ use std::collections::VecDeque;
 // Lunar gravity constant (1/6th of Earth's gravity)
 const LUNAR_GRAVITY: f32 = -2.6; // m/s²
 const PLAYER_SPEED: f32 = 2.0;
-const JUMP_IMPULSE: f32 = 2.0;
+const JUMP_IMPULSE: f32 = 140.0; // Scaled for 70kg mass (2.0 * 70)
+const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 10000;
@@ -229,6 +230,7 @@ fn setup(
         Friction::coefficient(0.7),
         Damping { linear_damping: 0.1, angular_damping: 1.0 },
         LockedAxes::ROTATION_LOCKED, // Prevent player from rotating
+        AdditionalMassProperties::Mass(PLAYER_MASS), // Set player mass
         ExternalForce::default(),
         ExternalImpulse::default(),
     ));
@@ -302,7 +304,7 @@ fn player_input(
 
         // Normalize and apply force
         if movement.length() > 0.0 {
-            movement = movement.normalize() * PLAYER_SPEED * 40.0; // Scale up for force-based movement
+            movement = movement.normalize() * PLAYER_SPEED * PLAYER_MASS * 40.0; // Scale by mass for consistent acceleration
             external_force.force = movement;
         } else {
             external_force.force = Vec3::ZERO;
@@ -310,7 +312,7 @@ fn player_input(
 
         // Jump (Space key)
         if keyboard_input.just_pressed(KeyCode::Space) {
-            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 10.0, 0.0); // Scale up for impulse
+            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 10.0, 0.0); // Already scaled for mass
         }
     }
 }
