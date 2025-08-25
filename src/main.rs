@@ -63,8 +63,11 @@ fn main() {
         .run();
 }
 
-// Function to create a hilly terrain mesh
-fn create_hilly_terrain(size: f32, resolution: usize) -> Mesh {
+// Function to create a hilly terrain mesh with randomized parameters
+fn create_hilly_terrain(size: f32, resolution: usize, seed: u64) -> Mesh {
+    use rand::{Rng, SeedableRng};
+    use rand::rngs::StdRng;
+    
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -73,20 +76,56 @@ fn create_hilly_terrain(size: f32, resolution: usize) -> Mesh {
     let step = size / resolution as f32;
     let half_size = size * 0.5;
     
-    // Generate height map using simple noise
+    // Create seeded random number generator for reproducible terrain
+    let mut rng = StdRng::seed_from_u64(seed);
+    
+    // Generate random coefficients for terrain layers
+    let num_layers = rng.gen_range(4..8); // Random number of terrain layers
+    let mut terrain_layers = Vec::new();
+    
+    for _ in 0..num_layers {
+        terrain_layers.push((
+            rng.gen_range(0.01..0.3),   // frequency_x
+            rng.gen_range(0.01..0.3),   // frequency_z
+            rng.gen_range(0.5..4.0),    // amplitude
+            rng.gen_range(0.0..std::f32::consts::TAU), // phase_x
+            rng.gen_range(0.0..std::f32::consts::TAU), // phase_z
+            rng.gen_range(0..4),        // wave_type (0=sin*cos, 1=cos*sin, 2=sin*sin, 3=cos*cos)
+        ));
+    }
+    
+    // Generate height map using randomized multi-layer noise
     let mut heights = vec![vec![0.0; resolution + 1]; resolution + 1];
     for x in 0..=resolution {
         for z in 0..=resolution {
             let world_x = (x as f32 * step) - half_size;
             let world_z = (z as f32 * step) - half_size;
             
-            // Create hills using multiple sine waves for natural-looking terrain
-            let height =
-                (world_x * 0.1).sin() * (world_z * 0.1).cos() * 2.0 +
-                (world_x * 0.05).cos() * (world_z * 0.15).sin() * 1.5 +
-                (world_x * 0.2).sin() * (world_z * 0.08).cos() * 0.8 +
-                (world_x * 0.03).cos() * (world_z * 0.04).sin() * 3.0;
+            let mut height = 0.0;
             
+            // Apply each terrain layer with random parameters
+            for &(freq_x, freq_z, amplitude, phase_x, phase_z, wave_type) in &terrain_layers {
+                let wave_x = world_x * freq_x + phase_x;
+                let wave_z = world_z * freq_z + phase_z;
+                
+                let layer_height = match wave_type {
+                    0 => wave_x.sin() * wave_z.cos(),
+                    1 => wave_x.cos() * wave_z.sin(),
+                    2 => wave_x.sin() * wave_z.sin(),
+                    3 => wave_x.cos() * wave_z.cos(),
+                    _ => wave_x.sin() * wave_z.cos(),
+                } * amplitude;
+                
+                height += layer_height;
+            }
+            
+            // Add some high-frequency detail noise
+            let detail_noise =
+                (world_x * rng.gen_range(0.3..0.8) + rng.gen_range(0.0..std::f32::consts::TAU)).sin() *
+                (world_z * rng.gen_range(0.3..0.8) + rng.gen_range(0.0..std::f32::consts::TAU)).cos() *
+                rng.gen_range(0.1..0.5);
+            
+            height += detail_noise;
             heights[x][z] = height;
         }
     }
@@ -152,8 +191,10 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Create terrain mesh for collision
-    let terrain_mesh = create_hilly_terrain(100.0, 100);
+    // Create terrain mesh for collision with a random seed
+    // You can change this seed value to generate different terrain layouts
+    let terrain_seed = 42; // Try different values like 123, 456, 789, etc.
+    let terrain_mesh = create_hilly_terrain(100.0, 100, terrain_seed);
     let terrain_mesh_handle = meshes.add(terrain_mesh.clone());
     
     // Add player with Rapier rigid body and complex collider (capsule)
