@@ -14,7 +14,7 @@ const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
 // Particle system constants
 const PARTICLE_COUNT: usize = 10000;
 const MIN_PARTICLE_RADIUS: f32 = 0.05;
-const MAX_PARTICLE_RADIUS: f32 = 0.35;
+const MAX_PARTICLE_RADIUS: f32 = 0.20;
 const SPAWN_AREA_SIZE: f32 = 24.0;
 
 // Command line arguments
@@ -368,7 +368,7 @@ fn spawn_regolith_particles(
         let radius = rng.gen_range(MIN_PARTICLE_RADIUS..MAX_PARTICLE_RADIUS);
         
         // Mass scales with volume (radius^3) for realistic physics
-        let mass = (radius / MIN_PARTICLE_RADIUS).powi(3) * 0.5;
+        let mass = (radius / MIN_PARTICLE_RADIUS).powi(3) * 0.15;
         
         // Create individual mesh for each particle size
         let particle_mesh = meshes.add(Sphere::new(radius));
