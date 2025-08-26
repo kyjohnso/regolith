@@ -13,8 +13,8 @@ const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 10000;
-const MIN_PARTICLE_RADIUS: f32 = 0.05;
-const MAX_PARTICLE_RADIUS: f32 = 0.20;
+const MIN_PARTICLE_RADIUS: f32 = 0.15;
+const MAX_PARTICLE_RADIUS: f32 = 0.36;
 const SPAWN_AREA_SIZE: f32 = 24.0;
 
 // Command line arguments
@@ -213,7 +213,7 @@ fn setup(
 ) {
     // Create terrain mesh for collision using the command line seed
     let seed = terrain_seed.0;
-    let terrain_mesh = create_hilly_terrain(100.0, 100, seed);
+    let terrain_mesh = create_hilly_terrain(100.0, 200, seed);
     let terrain_mesh_handle = meshes.add(terrain_mesh.clone());
     
     println!("Generated terrain with seed: {} (use --seed <number> to change)", seed);
@@ -362,7 +362,7 @@ fn spawn_regolith_particles(
     for _ in 0..PARTICLE_COUNT {
         let x = rng.gen_range(-SPAWN_AREA_SIZE..SPAWN_AREA_SIZE);
         let z = rng.gen_range(-SPAWN_AREA_SIZE..SPAWN_AREA_SIZE);
-        let y = rng.gen_range(3.0..8.0); // Start particles higher to let them fall
+        let y = rng.gen_range(18.0..18.1); // Start particles higher to let them fall
 
         // Generate random particle radius
         let radius = rng.gen_range(MIN_PARTICLE_RADIUS..MAX_PARTICLE_RADIUS);
