@@ -5,6 +5,27 @@ use bevy_rapier3d::prelude::*;
 use clap::Parser;
 use std::collections::VecDeque;
 
+// Camera mode enum
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CameraMode {
+    PanOrbit,
+    FirstPerson,
+}
+
+// Resource to track current camera mode
+#[derive(Resource)]
+struct CameraState {
+    mode: CameraMode,
+}
+
+impl Default for CameraState {
+    fn default() -> Self {
+        Self {
+            mode: CameraMode::PanOrbit,
+        }
+    }
+}
+
 // Lunar gravity constant (1/6th of Earth's gravity)
 const LUNAR_GRAVITY: f32 = -2.6; // m/s²
 const PLAYER_SPEED: f32 = 2.0;
@@ -36,6 +57,12 @@ struct TerrainSeed(u64);
 
 #[derive(Component)]
 struct Player;
+
+#[derive(Component)]
+struct FirstPersonCamera;
+
+#[derive(Component)]
+struct PanOrbitCameraMarker;
 
 #[derive(Component)]
 struct RegolithParticle {
@@ -114,6 +141,7 @@ fn main() {
         .init_resource::<FpsTracker>()
         .init_resource::<PlayerScale>()
         .init_resource::<PlayerDebugTimer>()
+        .init_resource::<CameraState>()
         .insert_resource(TerrainSeed(args.seed))
         .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui, setup_scale_ui))
         .add_systems(Update, (
@@ -124,6 +152,9 @@ fn main() {
             fps_display_system,
             handle_scale_slider,
             update_player_scale,
+            camera_toggle_system,
+            first_person_camera_system,
+            camera_mode_display_system,
         ))
         .run();
 }
@@ -323,20 +354,45 @@ fn setup(
         Camera3d::default(),
         Transform::from_xyz(-4.0, 4.5, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         PanOrbitCamera::default(),
+        PanOrbitCameraMarker,
+    ));
+
+    // Add first person camera (initially disabled)
+    commands.spawn((
+        Camera3d::default(),
+        Camera {
+            is_active: false,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 5.0, 0.0),
+        FirstPersonCamera,
     ));
 }
 
 fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_query: Query<(&mut ExternalForce, &mut ExternalImpulse), With<Player>>,
-    camera_query: Query<&Transform, (With<Camera3d>, Without<Player>)>,
+    pan_orbit_camera_query: Query<&Transform, (With<Camera3d>, With<PanOrbitCameraMarker>, Without<Player>)>,
+    first_person_camera_query: Query<&Transform, (With<Camera3d>, With<FirstPersonCamera>, Without<Player>)>,
+    camera_state: Res<CameraState>,
     _time: Res<Time>,
 ) {
     // Get camera transform to determine camera-relative directions
-    let camera_transform = if let Ok(transform) = camera_query.get_single() {
-        transform
-    } else {
-        return; // No camera found, skip input processing
+    let camera_transform = match camera_state.mode {
+        CameraMode::PanOrbit => {
+            if let Ok(transform) = pan_orbit_camera_query.single() {
+                transform
+            } else {
+                return; // No camera found, skip input processing
+            }
+        }
+        CameraMode::FirstPerson => {
+            if let Ok(transform) = first_person_camera_query.single() {
+                transform
+            } else {
+                return; // No camera found, skip input processing
+            }
+        }
     };
 
     for (mut external_force, mut external_impulse) in &mut player_query {
@@ -420,7 +476,7 @@ fn player_respawn_system(
             transform.translation = Vec3::new(0.0, 10.0, 0.0);
             
             // Reset velocity to prevent continued falling
-            if let Ok(mut velocity) = velocity_query.get_single_mut() {
+            if let Ok(mut velocity) = velocity_query.single_mut() {
                 velocity.linvel = Vec3::ZERO;
                 velocity.angvel = Vec3::ZERO;
             }
@@ -531,6 +587,10 @@ fn fps_tracker_system(
     }
 }
 
+// Component for camera mode display text
+#[derive(Component)]
+struct CameraModeText;
+
 // Setup FPS UI overlay
 fn setup_fps_ui(mut commands: Commands) {
     // Create UI camera with higher priority to render on top
@@ -557,6 +617,23 @@ fn setup_fps_ui(mut commands: Commands) {
             ..default()
         },
         FpsText,
+    ));
+
+    // Create camera mode text overlay
+    commands.spawn((
+        Text::new("Camera: Pan Orbit (Press C to toggle)"),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.8, 1.0, 0.8)), // Light green text
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(40.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        CameraModeText,
     ));
 }
 
@@ -703,5 +780,84 @@ fn update_player_scale(
         
         // Reset transform scale to 1.0 since we're changing the mesh size directly
         transform.scale = Vec3::ONE;
+    }
+}
+
+// Camera toggle system
+fn camera_toggle_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut camera_state: ResMut<CameraState>,
+    mut pan_orbit_query: Query<&mut Camera, (With<PanOrbitCameraMarker>, Without<FirstPersonCamera>)>,
+    mut first_person_query: Query<&mut Camera, (With<FirstPersonCamera>, Without<PanOrbitCameraMarker>)>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyC) {
+        // Toggle camera mode
+        camera_state.mode = match camera_state.mode {
+            CameraMode::PanOrbit => CameraMode::FirstPerson,
+            CameraMode::FirstPerson => CameraMode::PanOrbit,
+        };
+
+        // Update camera active states
+        match camera_state.mode {
+            CameraMode::PanOrbit => {
+                // Enable pan orbit camera, disable first person
+                if let Ok(mut pan_orbit_cam) = pan_orbit_query.single_mut() {
+                    pan_orbit_cam.is_active = true;
+                }
+                if let Ok(mut first_person_cam) = first_person_query.single_mut() {
+                    first_person_cam.is_active = false;
+                }
+                println!("Switched to Pan Orbit Camera");
+            }
+            CameraMode::FirstPerson => {
+                // Enable first person camera, disable pan orbit
+                if let Ok(mut pan_orbit_cam) = pan_orbit_query.single_mut() {
+                    pan_orbit_cam.is_active = false;
+                }
+                if let Ok(mut first_person_cam) = first_person_query.single_mut() {
+                    first_person_cam.is_active = true;
+                }
+                println!("Switched to First Person Camera");
+            }
+        }
+    }
+}
+
+// First person camera system - follows player at fixed angle behind
+fn first_person_camera_system(
+    player_query: Query<&Transform, (With<Player>, Without<FirstPersonCamera>)>,
+    mut camera_query: Query<&mut Transform, (With<FirstPersonCamera>, Without<Player>)>,
+    camera_state: Res<CameraState>,
+) {
+    if camera_state.mode != CameraMode::FirstPerson {
+        return;
+    }
+
+    if let (Ok(player_transform), Ok(mut camera_transform)) =
+        (player_query.single(), camera_query.single_mut()) {
+        
+        // Position camera behind and above the player at a fixed angle
+        let offset = Vec3::new(0.0, 2.0, 4.0); // Behind and above the player
+        let camera_position = player_transform.translation + offset;
+        
+        // Update camera position and make it look at the player
+        camera_transform.translation = camera_position;
+        camera_transform.look_at(player_transform.translation, Vec3::Y);
+    }
+}
+
+// Camera mode display system
+fn camera_mode_display_system(
+    camera_state: Res<CameraState>,
+    mut camera_mode_text_query: Query<&mut Text, With<CameraModeText>>,
+) {
+    if camera_state.is_changed() {
+        if let Ok(mut text) = camera_mode_text_query.single_mut() {
+            let mode_text = match camera_state.mode {
+                CameraMode::PanOrbit => "Camera: Pan Orbit (Press C to toggle)",
+                CameraMode::FirstPerson => "Camera: First Person (Press C to toggle)",
+            };
+            text.0 = mode_text.to_string();
+        }
     }
 }
