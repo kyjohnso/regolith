@@ -16,12 +16,14 @@ enum CameraMode {
 #[derive(Resource)]
 struct CameraState {
     mode: CameraMode,
+    first_person_orbit_angle: f32, // Angle in radians for orbiting around player
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
             mode: CameraMode::PanOrbit,
+            first_person_orbit_angle: 0.0, // Start facing forward
         }
     }
 }
@@ -635,6 +637,22 @@ fn setup_fps_ui(mut commands: Commands) {
         },
         CameraModeText,
     ));
+
+    // Create camera controls text overlay
+    commands.spawn((
+        Text::new("First Person: ← → to orbit around player"),
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.7, 0.9, 0.7)), // Light green text
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(65.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+    ));
 }
 
 // Update FPS display system
@@ -823,22 +841,39 @@ fn camera_toggle_system(
     }
 }
 
-// First person camera system - follows player at fixed angle behind
+// First person camera system - follows player with orbital controls
 fn first_person_camera_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
     player_query: Query<&Transform, (With<Player>, Without<FirstPersonCamera>)>,
     mut camera_query: Query<&mut Transform, (With<FirstPersonCamera>, Without<Player>)>,
-    camera_state: Res<CameraState>,
+    mut camera_state: ResMut<CameraState>,
+    time: Res<Time>,
 ) {
     if camera_state.mode != CameraMode::FirstPerson {
         return;
     }
 
+    // Handle arrow key input for orbiting
+    let orbit_speed = 2.0; // radians per second
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
+        camera_state.first_person_orbit_angle += orbit_speed * time.delta_secs();
+    }
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
+        camera_state.first_person_orbit_angle -= orbit_speed * time.delta_secs();
+    }
+
     if let (Ok(player_transform), Ok(mut camera_transform)) =
         (player_query.single(), camera_query.single_mut()) {
         
-        // Position camera behind and above the player at a fixed angle
-        let offset = Vec3::new(0.0, 2.0, 4.0); // Behind and above the player
-        let camera_position = player_transform.translation + offset;
+        // Calculate orbital position around the player
+        let orbit_radius = 4.0;
+        let orbit_height = 2.0;
+        
+        // Use the orbit angle to position camera around player
+        let x_offset = camera_state.first_person_orbit_angle.sin() * orbit_radius;
+        let z_offset = camera_state.first_person_orbit_angle.cos() * orbit_radius;
+        
+        let camera_position = player_transform.translation + Vec3::new(x_offset, orbit_height, z_offset);
         
         // Update camera position and make it look at the player
         camera_transform.translation = camera_position;
@@ -855,7 +890,7 @@ fn camera_mode_display_system(
         if let Ok(mut text) = camera_mode_text_query.single_mut() {
             let mode_text = match camera_state.mode {
                 CameraMode::PanOrbit => "Camera: Pan Orbit (Press C to toggle)",
-                CameraMode::FirstPerson => "Camera: First Person (Press C to toggle)",
+                CameraMode::FirstPerson => "Camera: First Person (Press C to toggle, ← → to orbit)",
             };
             text.0 = mode_text.to_string();
         }
