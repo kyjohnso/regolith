@@ -17,6 +17,8 @@ enum CameraMode {
 struct CameraState {
     mode: CameraMode,
     first_person_orbit_angle: f32, // Angle in radians for orbiting around player
+    first_person_elevation: f32,   // Height offset relative to player
+    first_person_zoom_distance: f32, // Distance from player for zoom
 }
 
 impl Default for CameraState {
@@ -24,6 +26,8 @@ impl Default for CameraState {
         Self {
             mode: CameraMode::PanOrbit,
             first_person_orbit_angle: 0.0, // Start facing forward
+            first_person_elevation: 2.0,   // Start 2 units above player
+            first_person_zoom_distance: 4.0, // Start at 4 units distance
         }
     }
 }
@@ -640,7 +644,7 @@ fn setup_fps_ui(mut commands: Commands) {
 
     // Create camera controls text overlay
     commands.spawn((
-        Text::new("First Person: ← → to orbit around player"),
+        Text::new("First Person: ← → orbit, ↑ ↓ elevation, scroll zoom"),
         TextFont {
             font_size: 14.0,
             ..default()
@@ -841,9 +845,10 @@ fn camera_toggle_system(
     }
 }
 
-// First person camera system - follows player with orbital controls
+// First person camera system - follows player with orbital, elevation, and zoom controls
 fn first_person_camera_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut scroll_events: EventReader<bevy::input::mouse::MouseWheel>,
     player_query: Query<&Transform, (With<Player>, Without<FirstPersonCamera>)>,
     mut camera_query: Query<&mut Transform, (With<FirstPersonCamera>, Without<Player>)>,
     mut camera_state: ResMut<CameraState>,
@@ -853,7 +858,7 @@ fn first_person_camera_system(
         return;
     }
 
-    // Handle arrow key input for orbiting
+    // Handle arrow key input for orbiting (left/right)
     let orbit_speed = 2.0; // radians per second
     if keyboard_input.pressed(KeyCode::ArrowLeft) {
         camera_state.first_person_orbit_angle += orbit_speed * time.delta_secs();
@@ -862,18 +867,49 @@ fn first_person_camera_system(
         camera_state.first_person_orbit_angle -= orbit_speed * time.delta_secs();
     }
 
+    // Handle arrow key input for elevation (up/down)
+    let elevation_speed = 3.0; // units per second
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
+        camera_state.first_person_elevation += elevation_speed * time.delta_secs();
+        // Clamp elevation to reasonable bounds
+        camera_state.first_person_elevation = camera_state.first_person_elevation.min(10.0);
+    }
+    if keyboard_input.pressed(KeyCode::ArrowDown) {
+        camera_state.first_person_elevation -= elevation_speed * time.delta_secs();
+        // Clamp elevation to reasonable bounds (minimum 0.5 units above player)
+        camera_state.first_person_elevation = camera_state.first_person_elevation.max(0.5);
+    }
+
+    // Handle mouse scroll wheel for zoom
+    for scroll_event in scroll_events.read() {
+        let zoom_speed = 2.0; // units per scroll tick
+        match scroll_event.unit {
+            bevy::input::mouse::MouseScrollUnit::Line => {
+                // Scroll up = zoom in (decrease distance), scroll down = zoom out (increase distance)
+                camera_state.first_person_zoom_distance -= scroll_event.y * zoom_speed;
+                // Clamp zoom distance to reasonable bounds
+                camera_state.first_person_zoom_distance = camera_state.first_person_zoom_distance.clamp(1.0, 15.0);
+            }
+            bevy::input::mouse::MouseScrollUnit::Pixel => {
+                // Handle pixel-based scrolling (touchpads, etc.)
+                camera_state.first_person_zoom_distance -= scroll_event.y * zoom_speed * 0.01;
+                camera_state.first_person_zoom_distance = camera_state.first_person_zoom_distance.clamp(1.0, 15.0);
+            }
+        }
+    }
+
     if let (Ok(player_transform), Ok(mut camera_transform)) =
         (player_query.single(), camera_query.single_mut()) {
         
-        // Calculate orbital position around the player
-        let orbit_radius = 4.0;
-        let orbit_height = 2.0;
+        // Use the zoom distance from camera state
+        let orbit_radius = camera_state.first_person_zoom_distance;
         
         // Use the orbit angle to position camera around player
         let x_offset = camera_state.first_person_orbit_angle.sin() * orbit_radius;
         let z_offset = camera_state.first_person_orbit_angle.cos() * orbit_radius;
         
-        let camera_position = player_transform.translation + Vec3::new(x_offset, orbit_height, z_offset);
+        // Use the elevation from camera state
+        let camera_position = player_transform.translation + Vec3::new(x_offset, camera_state.first_person_elevation, z_offset);
         
         // Update camera position and make it look at the player
         camera_transform.translation = camera_position;
@@ -890,7 +926,7 @@ fn camera_mode_display_system(
         if let Ok(mut text) = camera_mode_text_query.single_mut() {
             let mode_text = match camera_state.mode {
                 CameraMode::PanOrbit => "Camera: Pan Orbit (Press C to toggle)",
-                CameraMode::FirstPerson => "Camera: First Person (Press C to toggle, ← → to orbit)",
+                CameraMode::FirstPerson => "Camera: First Person (Press C to toggle, arrows + scroll)",
             };
             text.0 = mode_text.to_string();
         }
