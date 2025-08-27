@@ -313,23 +313,44 @@ fn setup(
 fn player_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut player_query: Query<(&mut ExternalForce, &mut ExternalImpulse), With<Player>>,
+    camera_query: Query<&Transform, (With<Camera3d>, Without<Player>)>,
     _time: Res<Time>,
 ) {
+    // Get camera transform to determine camera-relative directions
+    let camera_transform = if let Ok(transform) = camera_query.get_single() {
+        transform
+    } else {
+        return; // No camera found, skip input processing
+    };
+
     for (mut external_force, mut external_impulse) in &mut player_query {
         let mut angular_impulse = Vec3::ZERO;
 
-        // Angular momentum controls (WASD) - apply torque to spin the sphere
+        // Get camera's forward and right vectors (projected onto XZ plane for rolling)
+        let camera_forward = camera_transform.forward();
+        let camera_right = camera_transform.right();
+        
+        // Project vectors onto XZ plane and normalize for consistent rolling
+        let forward_xz = Vec3::new(camera_forward.x, 0.0, camera_forward.z).normalize();
+        let right_xz = Vec3::new(camera_right.x, 0.0, camera_right.z).normalize();
+
+        // Angular momentum controls (WASD) - apply torque relative to camera orientation
         if keyboard_input.pressed(KeyCode::KeyW) {
-            angular_impulse.x -= ANGULAR_IMPULSE; // Roll forward
+            // Roll away from camera (forward relative to camera view)
+            // Convert forward direction to angular impulse around the perpendicular axis
+            angular_impulse += Vec3::new(forward_xz.z, 0.0, -forward_xz.x) * ANGULAR_IMPULSE;
         }
         if keyboard_input.pressed(KeyCode::KeyS) {
-            angular_impulse.x += ANGULAR_IMPULSE; // Roll backward
+            // Roll toward camera (backward relative to camera view)
+            angular_impulse += Vec3::new(-forward_xz.z, 0.0, forward_xz.x) * ANGULAR_IMPULSE;
         }
         if keyboard_input.pressed(KeyCode::KeyA) {
-            angular_impulse.z += ANGULAR_IMPULSE; // Roll left
+            // Roll left relative to camera
+            angular_impulse += Vec3::new(-right_xz.z, 0.0, right_xz.x) * ANGULAR_IMPULSE;
         }
         if keyboard_input.pressed(KeyCode::KeyD) {
-            angular_impulse.z -= ANGULAR_IMPULSE; // Roll right
+            // Roll right relative to camera
+            angular_impulse += Vec3::new(right_xz.z, 0.0, -right_xz.x) * ANGULAR_IMPULSE;
         }
 
         // Apply angular impulse for rolling motion
