@@ -10,6 +10,9 @@ const LUNAR_GRAVITY: f32 = -2.6; // m/s²
 const PLAYER_SPEED: f32 = 2.0;
 const JUMP_IMPULSE: f32 = 140.0; // Scaled for 70kg mass (2.0 * 70)
 const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
+const ANGULAR_IMPULSE: f32 = 50.0; // Angular impulse strength for WASD controls
+const PLAYER_RADIUS: f32 = 0.8; // Sphere radius for player
+const PLAYER_FRICTION: f32 = 1.2; // Friction coefficient for player sphere
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 10000;
@@ -218,18 +221,18 @@ fn setup(
     
     println!("Generated terrain with seed: {} (use --seed <number> to change)", seed);
     
-    // Add player with Rapier rigid body and complex collider (capsule)
+    // Add player with Rapier rigid body as a sphere
     commands.spawn((
-        Mesh3d(meshes.add(Capsule3d::new(0.5, 1.8))),
+        Mesh3d(meshes.add(Sphere::new(PLAYER_RADIUS))),
         MeshMaterial3d(materials.add(Color::srgb(0.2, 0.7, 0.9))),
         Transform::from_xyz(0.0, 5.0, 0.0),
         Player,
         RigidBody::Dynamic,
-        Collider::capsule_y(0.9, 0.5), // Complex collider for player
+        Collider::ball(PLAYER_RADIUS), // Sphere collider for player
         Restitution::coefficient(0.3),
-        Friction::coefficient(0.7),
-        Damping { linear_damping: 0.1, angular_damping: 1.0 },
-        LockedAxes::ROTATION_LOCKED, // Prevent player from rotating
+        Friction::coefficient(PLAYER_FRICTION),
+        Damping { linear_damping: 0.1, angular_damping: 0.3 }, // Reduced angular damping to allow spinning
+        // Removed LockedAxes to allow rotation
         AdditionalMassProperties::Mass(PLAYER_MASS), // Set player mass
         ExternalForce::default(),
         ExternalImpulse::default(),
@@ -286,34 +289,34 @@ fn player_input(
     _time: Res<Time>,
 ) {
     for (mut external_force, mut external_impulse) in &mut player_query {
-        let mut movement = Vec3::ZERO;
+        let mut angular_impulse = Vec3::ZERO;
 
-        // Horizontal movement (WASD)
+        // Angular momentum controls (WASD) - apply torque to spin the sphere
         if keyboard_input.pressed(KeyCode::KeyW) {
-            movement.z -= 1.0;
+            angular_impulse.x -= ANGULAR_IMPULSE; // Roll forward
         }
         if keyboard_input.pressed(KeyCode::KeyS) {
-            movement.z += 1.0;
+            angular_impulse.x += ANGULAR_IMPULSE; // Roll backward
         }
         if keyboard_input.pressed(KeyCode::KeyA) {
-            movement.x -= 1.0;
+            angular_impulse.z += ANGULAR_IMPULSE; // Roll left
         }
         if keyboard_input.pressed(KeyCode::KeyD) {
-            movement.x += 1.0;
+            angular_impulse.z -= ANGULAR_IMPULSE; // Roll right
         }
 
-        // Normalize and apply force
-        if movement.length() > 0.0 {
-            movement = movement.normalize() * PLAYER_SPEED * PLAYER_MASS * 40.0; // Scale by mass for consistent acceleration
-            external_force.force = movement;
-        } else {
-            external_force.force = Vec3::ZERO;
+        // Apply angular impulse for rolling motion
+        if angular_impulse.length() > 0.0 {
+            external_impulse.torque_impulse = angular_impulse;
         }
 
-        // Jump (Space key)
+        // Jump (Space key) - still applies linear impulse upward
         if keyboard_input.just_pressed(KeyCode::Space) {
-            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 10.0, 0.0); // Already scaled for mass
+            external_impulse.impulse = Vec3::new(0.0, JUMP_IMPULSE * 10.0, 0.0);
         }
+        
+        // Clear linear forces since we're now using angular momentum for movement
+        external_force.force = Vec3::ZERO;
     }
 }
 
