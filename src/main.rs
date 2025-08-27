@@ -81,6 +81,20 @@ impl Default for PlayerScale {
     }
 }
 
+// Resource for player debug timing
+#[derive(Resource)]
+struct PlayerDebugTimer {
+    last_print_time: f32,
+}
+
+impl Default for PlayerDebugTimer {
+    fn default() -> Self {
+        Self {
+            last_print_time: 0.0,
+        }
+    }
+}
+
 // Component for the scale slider
 #[derive(Component)]
 struct ScaleSlider;
@@ -99,6 +113,7 @@ fn main() {
         .add_plugins(RapierDebugRenderPlugin::default())
         .init_resource::<FpsTracker>()
         .init_resource::<PlayerScale>()
+        .init_resource::<PlayerDebugTimer>()
         .insert_resource(TerrainSeed(args.seed))
         .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui, setup_scale_ui))
         .add_systems(Update, (
@@ -383,36 +398,34 @@ fn player_movement(
 fn player_respawn_system(
     mut player_query: Query<&mut Transform, With<Player>>,
     mut velocity_query: Query<&mut Velocity, With<Player>>,
+    mut debug_timer: ResMut<PlayerDebugTimer>,
     time: Res<Time>,
 ) {
     // Print player position every second for debugging
-    static mut LAST_PRINT_TIME: f32 = 0.0;
-    unsafe {
-        LAST_PRINT_TIME += time.delta_secs();
+    debug_timer.last_print_time += time.delta_secs();
+    
+    for mut transform in &mut player_query {
+        // Print position every second
+        if debug_timer.last_print_time >= 1.0 {
+            println!("Player position: ({:.2}, {:.2}, {:.2})",
+                transform.translation.x,
+                transform.translation.y,
+                transform.translation.z);
+            debug_timer.last_print_time = 0.0;
+        }
         
-        for mut transform in &mut player_query {
-            // Print position every second
-            if LAST_PRINT_TIME >= 1.0 {
-                println!("Player position: ({:.2}, {:.2}, {:.2})",
-                    transform.translation.x,
-                    transform.translation.y,
-                    transform.translation.z);
-                LAST_PRINT_TIME = 0.0;
+        // Check if player has fallen below -10
+        if transform.translation.y < -10.0 {
+            // Respawn player at (0, 10, 0)
+            transform.translation = Vec3::new(0.0, 10.0, 0.0);
+            
+            // Reset velocity to prevent continued falling
+            if let Ok(mut velocity) = velocity_query.get_single_mut() {
+                velocity.linvel = Vec3::ZERO;
+                velocity.angvel = Vec3::ZERO;
             }
             
-            // Check if player has fallen below -10
-            if transform.translation.y < -10.0 {
-                // Respawn player at (0, 10, 0)
-                transform.translation = Vec3::new(0.0, 10.0, 0.0);
-                
-                // Reset velocity to prevent continued falling
-                if let Ok(mut velocity) = velocity_query.get_single_mut() {
-                    velocity.linvel = Vec3::ZERO;
-                    velocity.angvel = Vec3::ZERO;
-                }
-                
-                println!("Player respawned at (0, 10, 0)");
-            }
+            println!("Player respawned at (0, 10, 0)");
         }
     }
 }
