@@ -104,6 +104,7 @@ fn main() {
         .add_systems(Update, (
             player_input,
             player_movement,
+            player_respawn_system,
             fps_tracker_system,
             fps_display_system,
             handle_scale_slider,
@@ -376,6 +377,43 @@ fn player_movement(
     for _transform in &mut player_query {
         // Player movement is now handled by Rapier physics
         // Any additional player logic can go here
+    }
+}
+
+fn player_respawn_system(
+    mut player_query: Query<&mut Transform, With<Player>>,
+    mut velocity_query: Query<&mut Velocity, With<Player>>,
+    time: Res<Time>,
+) {
+    // Print player position every second for debugging
+    static mut LAST_PRINT_TIME: f32 = 0.0;
+    unsafe {
+        LAST_PRINT_TIME += time.delta_secs();
+        
+        for mut transform in &mut player_query {
+            // Print position every second
+            if LAST_PRINT_TIME >= 1.0 {
+                println!("Player position: ({:.2}, {:.2}, {:.2})",
+                    transform.translation.x,
+                    transform.translation.y,
+                    transform.translation.z);
+                LAST_PRINT_TIME = 0.0;
+            }
+            
+            // Check if player has fallen below -10
+            if transform.translation.y < -10.0 {
+                // Respawn player at (0, 10, 0)
+                transform.translation = Vec3::new(0.0, 10.0, 0.0);
+                
+                // Reset velocity to prevent continued falling
+                if let Ok(mut velocity) = velocity_query.get_single_mut() {
+                    velocity.linvel = Vec3::ZERO;
+                    velocity.angvel = Vec3::ZERO;
+                }
+                
+                println!("Player respawned at (0, 10, 0)");
+            }
+        }
     }
 }
 
