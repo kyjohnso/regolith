@@ -13,7 +13,7 @@ const PLAYER_MASS: f32 = 70.0; // kg - typical human mass
 
 // Particle system constants
 const PARTICLE_COUNT: usize = 10000;
-const MIN_PARTICLE_RADIUS: f32 = 0.15;
+const MIN_PARTICLE_RADIUS: f32 = 0.25;
 const MAX_PARTICLE_RADIUS: f32 = 0.36;
 const SPAWN_AREA_SIZE: f32 = 24.0;
 
