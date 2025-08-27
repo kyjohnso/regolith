@@ -65,6 +65,30 @@ impl Default for FpsTracker {
 #[derive(Component)]
 struct FpsText;
 
+// Resource to track player scale
+#[derive(Resource)]
+struct PlayerScale {
+    current_scale: f32,
+    target_scale: f32,
+}
+
+impl Default for PlayerScale {
+    fn default() -> Self {
+        Self {
+            current_scale: 1.0,
+            target_scale: 1.0,
+        }
+    }
+}
+
+// Component for the scale slider
+#[derive(Component)]
+struct ScaleSlider;
+
+// Component for scale display text
+#[derive(Component)]
+struct ScaleText;
+
 fn main() {
     let args = Args::parse();
     
@@ -74,13 +98,16 @@ fn main() {
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(RapierDebugRenderPlugin::default())
         .init_resource::<FpsTracker>()
+        .init_resource::<PlayerScale>()
         .insert_resource(TerrainSeed(args.seed))
-        .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui))
+        .add_systems(Startup, (setup, spawn_regolith_particles, setup_fps_ui, setup_scale_ui))
         .add_systems(Update, (
             player_input,
             player_movement,
             fps_tracker_system,
             fps_display_system,
+            handle_scale_slider,
+            update_player_scale,
         ))
         .run();
 }
@@ -468,5 +495,141 @@ fn fps_display_system(
 ) {
     if let Ok(mut text) = fps_text_query.single_mut() {
         text.0 = format!("FPS: {:.1}", fps_tracker.current_fps);
+    }
+}
+
+// Setup scale UI overlay
+fn setup_scale_ui(mut commands: Commands) {
+    // Create a container for the scale controls
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(50.0),
+            left: Val::Px(10.0),
+            width: Val::Px(300.0),
+            height: Val::Px(80.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(10.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+        BorderRadius::all(Val::Px(5.0)),
+    )).with_children(|parent| {
+        // Scale label
+        parent.spawn((
+            Text::new("Player Ball Scale: 1.0"),
+            TextFont {
+                font_size: 18.0,
+                ..default()
+            },
+            TextColor(Color::srgb(1.0, 1.0, 1.0)),
+            Node {
+                margin: UiRect::all(Val::Px(5.0)),
+                ..default()
+            },
+            ScaleText,
+        ));
+        
+        // Instructions text
+        parent.spawn((
+            Text::new("Use [ and ] keys to change scale"),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::srgb(0.8, 0.8, 0.8)),
+            Node {
+                margin: UiRect::all(Val::Px(5.0)),
+                ..default()
+            },
+        ));
+        
+        // Scale slider container (visual only)
+        parent.spawn((
+            Node {
+                width: Val::Px(280.0),
+                height: Val::Px(20.0),
+                margin: UiRect::all(Val::Px(10.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.3, 0.3, 0.3)),
+            BorderRadius::all(Val::Px(10.0)),
+        )).with_children(|slider_parent| {
+            // Slider handle
+            slider_parent.spawn((
+                Node {
+                    width: Val::Px(20.0),
+                    height: Val::Px(20.0),
+                    left: Val::Px(90.0), // Start at middle position (scale 1.0)
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.7, 0.9)),
+                BorderRadius::all(Val::Px(10.0)),
+                ScaleSlider,
+            ));
+        });
+    });
+}
+
+// Handle scale slider interaction with keyboard
+fn handle_scale_slider(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut player_scale: ResMut<PlayerScale>,
+    mut slider_query: Query<&mut Node, With<ScaleSlider>>,
+    time: Res<Time>,
+) {
+    let scale_speed = 1.0; // Scale units per second
+    let mut scale_change = 0.0;
+    
+    // Use [ and ] keys to decrease/increase scale
+    if keyboard_input.pressed(KeyCode::BracketLeft) {
+        scale_change -= scale_speed * time.delta_secs();
+    }
+    if keyboard_input.pressed(KeyCode::BracketRight) {
+        scale_change += scale_speed * time.delta_secs();
+    }
+    
+    if scale_change != 0.0 {
+        player_scale.target_scale = (player_scale.target_scale + scale_change).clamp(0.5, 2.5);
+        
+        // Update slider visual position
+        if let Ok(mut node) = slider_query.single_mut() {
+            let normalized_scale = (player_scale.target_scale - 0.5) / 2.0; // Normalize to 0-1
+            let slider_position = normalized_scale * 260.0; // 260px is the usable slider width
+            node.left = Val::Px(slider_position);
+        }
+    }
+}
+
+// Update player scale display and physics
+fn update_player_scale(
+    mut player_scale: ResMut<PlayerScale>,
+    mut scale_text_query: Query<&mut Text, With<ScaleText>>,
+    mut player_query: Query<(&mut Transform, &mut Collider, &mut Mesh3d), With<Player>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    time: Res<Time>,
+) {
+    // Smoothly interpolate to target scale
+    let lerp_speed = 5.0;
+    player_scale.current_scale = player_scale.current_scale +
+        (player_scale.target_scale - player_scale.current_scale) * lerp_speed * time.delta_secs();
+    
+    // Update scale display text
+    if let Ok(mut text) = scale_text_query.single_mut() {
+        text.0 = format!("Player Ball Scale: {:.2}", player_scale.current_scale);
+    }
+    
+    // Update player transform, collider, and mesh
+    if let Ok((mut transform, mut collider, mut mesh3d)) = player_query.single_mut() {
+        let new_radius = PLAYER_RADIUS * player_scale.current_scale;
+        
+        // Update the mesh with new radius
+        *mesh3d = Mesh3d(meshes.add(Sphere::new(new_radius)));
+        
+        // Update collider
+        *collider = Collider::ball(new_radius);
+        
+        // Reset transform scale to 1.0 since we're changing the mesh size directly
+        transform.scale = Vec3::ONE;
     }
 }
